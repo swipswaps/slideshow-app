@@ -1,0 +1,982 @@
+#!/usr/bin/env python3
+"""
+Slideshow Manager with GUI - Manage, preview, and create slideshows from images.
+Features: thumbnails, sort, search, rename, add, hide, remove images.
+"""
+
+import os
+import sys
+import subprocess
+import shutil
+from datetime import datetime
+from pathlib import Path
+import json
+import tkinter as tk
+from tkinter import ttk, filedialog, simpledialog, messagebox, scrolledtext
+from PIL import Image, ImageTk
+import threading
+import logging
+import traceback
+from io import StringIO
+
+# Setup logging to both file and console
+log_file = Path.cwd() / "slideshow_manager.log"
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+
+
+class ErrorDialog(tk.Toplevel):
+    """Custom error dialog with copy-paste capability."""
+
+    def __init__(self, parent, title, message, error_type="error"):
+        super().__init__(parent)
+        self.title(title)
+        self.geometry("600x400")
+        self.resizable(True, True)
+
+        # Center on parent
+        self.transient(parent)
+        self.grab_set()
+
+        # Icon and title
+        icon_map = {"error": "❌", "warning": "⚠️", "info": "ℹ️"}
+        icon = icon_map.get(error_type, "❌")
+
+        title_frame = ttk.Frame(self)
+        title_frame.pack(fill=tk.X, padx=10, pady=10)
+        ttk.Label(title_frame, text=f"{icon} {title}", font=("Arial", 12, "bold")).pack(anchor=tk.W)
+
+        # Message text area (selectable)
+        text_frame = ttk.LabelFrame(self, text="Error Details (Selectable & Copyable)", padding=10)
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        self.text_widget = scrolledtext.ScrolledText(
+            text_frame,
+            height=15,
+            width=70,
+            wrap=tk.WORD,
+            font=("Courier", 9),
+            bg="gray20",
+            fg="white"
+        )
+        self.text_widget.pack(fill=tk.BOTH, expand=True)
+        self.text_widget.insert(tk.END, message)
+        self.text_widget.config(state=tk.DISABLED)  # Read-only
+
+        # Add context menu for copy
+        self.text_widget.bind("<Button-3>", self._show_context_menu)
+
+        # Buttons frame
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        ttk.Button(btn_frame, text="📋 Copy All", command=self._copy_all).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="📁 View Log File", command=self._open_log).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="✅ Close", command=self.destroy).pack(side=tk.RIGHT, padx=5)
+
+    def _show_context_menu(self, event):
+        """Show context menu for copy."""
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="Copy", command=self._copy_selected)
+        menu.add_command(label="Copy All", command=self._copy_all)
+        menu.post(event.x_root, event.y_root)
+
+    def _copy_selected(self):
+        """Copy selected text to clipboard."""
+        try:
+            selected = self.text_widget.get(tk.SEL_FIRST, tk.SEL_LAST)
+            self.clipboard_clear()
+            self.clipboard_append(selected)
+            logger.info("Text copied to clipboard")
+        except tk.TclError:
+            pass
+
+    def _copy_all(self):
+        """Copy all text to clipboard."""
+        try:
+            all_text = self.text_widget.get(1.0, tk.END)
+            self.clipboard_clear()
+            self.clipboard_append(all_text)
+            messagebox.showinfo("Success", "✅ All error details copied to clipboard!")
+            logger.info("All error details copied to clipboard")
+        except Exception as e:
+            logger.error(f"Failed to copy to clipboard: {e}")
+
+    def _open_log(self):
+        """Open log file in default editor."""
+        try:
+            if sys.platform == "darwin":
+                subprocess.run(["open", str(log_file)])
+            elif sys.platform == "linux":
+                subprocess.run(["xdg-open", str(log_file)])
+            elif sys.platform == "win32":
+                subprocess.run(["notepad", str(log_file)])
+            logger.info(f"Opened log file: {log_file}")
+        except Exception as e:
+            logger.error(f"Failed to open log file: {e}")
+            messagebox.showerror("Error", f"Could not open log file:\n{e}")
+
+
+class SlideshowManager:
+    """Manage slideshow images and creation."""
+    
+    CONFIG_FILE = ".slideshow_config.json"
+
+    # Video player priority list (in order of preference)
+    PREFERRED_PLAYERS = [
+        "vlc",           # VLC media player (most compatible)
+        "mpv",           # MPV (lightweight, excellent quality)
+        "cinelerra",     # Cinelerra (professional)
+        "ffplay",        # FFplay (comes with ffmpeg)
+        "totem",         # GNOME Videos
+        "rhythmbox",     # GNOME Rhythmbox
+        "smplayer",      # SMPlayer
+        "mplayer",       # MPlayer
+        "xine",          # Xine
+        "gxine",         # Xine GUI
+    ]
+
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Slideshow Manager - Image Organizer")
+        self.root.geometry("1400x900")
+        self.root.minsize(800, 600)
+
+        self.images = []  # List of image paths
+        self.hidden_images = set()  # Hidden image paths
+        self.thumbnails = {}  # Cache for thumbnails
+        self.current_dir = Path.cwd()
+        self.is_creating = False  # Flag to prevent multiple slideshow creations
+        self.error_count = 0  # Track errors
+        self.warning_count = 0  # Track warnings
+        self.available_players = []  # Detected video players
+        self.preferred_player = None  # Best available player
+
+        logger.info("=" * 80)
+        logger.info("Slideshow Manager Started")
+        logger.info(f"Working Directory: {self.current_dir}")
+        logger.info(f"Python Version: {sys.version}")
+        logger.info(f"Platform: {sys.platform}")
+        logger.info("=" * 80)
+
+        self.load_config()
+        self.check_ffmpeg()
+        self.detect_video_players()
+        self.setup_ui()
+        self.load_images()
+
+        # Center window on screen
+        self.root.update_idletasks()
+        width = self.root.winfo_width()
+        height = self.root.winfo_height()
+        x = (self.root.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.root.winfo_screenheight() // 2) - (height // 2)
+        self.root.geometry(f'{width}x{height}+{x}+{y}')
+    
+    def show_error_log(self):
+        """Show error log viewer window."""
+        try:
+            if not log_file.exists():
+                messagebox.showinfo("No Logs", "No error log file found yet.")
+                return
+
+            with open(log_file, 'r') as f:
+                log_content = f.read()
+
+            # Create log viewer window
+            log_window = tk.Toplevel(self.root)
+            log_window.title("Error Log Viewer")
+            log_window.geometry("800x600")
+
+            # Title
+            title_frame = ttk.Frame(log_window)
+            title_frame.pack(fill=tk.X, padx=10, pady=10)
+            ttk.Label(title_frame, text="📋 Error Log", font=("Arial", 12, "bold")).pack(anchor=tk.W)
+            ttk.Label(title_frame, text=f"File: {log_file}", font=("Arial", 9), foreground="gray").pack(anchor=tk.W)
+
+            # Log text area
+            text_frame = ttk.Frame(log_window)
+            text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+            log_text = scrolledtext.ScrolledText(
+                text_frame,
+                wrap=tk.WORD,
+                font=("Courier", 9),
+                bg="gray20",
+                fg="white"
+            )
+            log_text.pack(fill=tk.BOTH, expand=True)
+            log_text.insert(tk.END, log_content)
+            log_text.config(state=tk.DISABLED)
+
+            # Buttons
+            btn_frame = ttk.Frame(log_window)
+            btn_frame.pack(fill=tk.X, padx=10, pady=10)
+
+            ttk.Button(btn_frame, text="📋 Copy All", command=lambda: self._copy_log_text(log_text)).pack(side=tk.LEFT, padx=5)
+            ttk.Button(btn_frame, text="🗑️ Clear Log", command=self._clear_log).pack(side=tk.LEFT, padx=5)
+            ttk.Button(btn_frame, text="✅ Close", command=log_window.destroy).pack(side=tk.RIGHT, padx=5)
+
+            logger.info("Error log viewer opened")
+        except Exception as e:
+            self._show_error("Error", f"Failed to open error log:\n{str(e)}", "error")
+
+    def _copy_log_text(self, text_widget):
+        """Copy log text to clipboard."""
+        try:
+            all_text = text_widget.get(1.0, tk.END)
+            self.root.clipboard_clear()
+            self.root.clipboard_append(all_text)
+            messagebox.showinfo("Success", "✅ Log copied to clipboard!")
+            logger.info("Log copied to clipboard")
+        except Exception as e:
+            logger.error(f"Failed to copy log: {e}")
+
+    def _clear_log(self):
+        """Clear the error log file."""
+        if messagebox.askyesno("Confirm", "Clear all error logs? This cannot be undone."):
+            try:
+                log_file.write_text("")
+                messagebox.showinfo("Success", "✅ Error log cleared!")
+                logger.info("Error log cleared by user")
+            except Exception as e:
+                self._show_error("Error", f"Failed to clear log:\n{str(e)}", "error")
+
+    def _show_error(self, title, message, error_type="error"):
+        """Show error dialog with copy-paste capability."""
+        self.error_count += 1
+        logger.error(f"{title}: {message}")
+
+        # Print to terminal
+        print(f"\n{'='*80}")
+        print(f"❌ {title}")
+        print(f"{'='*80}")
+        print(message)
+        print(f"{'='*80}\n")
+
+        # Show custom error dialog
+        ErrorDialog(self.root, title, message, error_type)
+
+    def _show_warning(self, title, message):
+        """Show warning dialog with copy-paste capability."""
+        self.warning_count += 1
+        logger.warning(f"{title}: {message}")
+
+        # Print to terminal
+        print(f"\n{'='*80}")
+        print(f"⚠️ {title}")
+        print(f"{'='*80}")
+        print(message)
+        print(f"{'='*80}\n")
+
+        # Show custom warning dialog
+        ErrorDialog(self.root, title, message, "warning")
+
+    def check_ffmpeg(self):
+        """Check and install ffmpeg if needed."""
+        if not shutil.which("ffmpeg"):
+            logger.warning("ffmpeg not found")
+            if messagebox.askyesno("ffmpeg Missing", "ffmpeg not found. Install now?"):
+                self.install_ffmpeg()
+            else:
+                self._show_error("Error", "ffmpeg is required to create slideshows", "error")
+    
+    def install_ffmpeg(self):
+        """Install ffmpeg based on OS."""
+        try:
+            logger.info("Attempting to install ffmpeg...")
+            if sys.platform == "darwin":
+                if shutil.which("brew"):
+                    logger.info("Installing ffmpeg via Homebrew...")
+                    subprocess.run(["brew", "install", "ffmpeg"], check=True)
+                else:
+                    self._show_error("Error", "Homebrew not found. Please install ffmpeg manually.", "error")
+                    return
+            elif sys.platform == "linux":
+                if shutil.which("apt-get"):
+                    logger.info("Installing ffmpeg via apt-get...")
+                    subprocess.run(["sudo", "apt-get", "update"], check=False)
+                    subprocess.run(["sudo", "apt-get", "install", "-y", "ffmpeg"], check=True)
+                else:
+                    self._show_error("Error", "Could not find package manager. Please install ffmpeg manually.", "error")
+                    return
+            elif sys.platform == "win32":
+                if shutil.which("choco"):
+                    logger.info("Installing ffmpeg via Chocolatey...")
+                    subprocess.run(["choco", "install", "-y", "ffmpeg"], check=True)
+                else:
+                    self._show_error("Error", "Chocolatey not found. Please install ffmpeg manually.", "error")
+                    return
+            messagebox.showinfo("Success", "✅ ffmpeg installed successfully")
+            logger.info("ffmpeg installed successfully")
+        except subprocess.CalledProcessError as e:
+            error_msg = f"FFmpeg installation failed:\n\nCommand: {' '.join(e.cmd)}\nReturn code: {e.returncode}"
+            self._show_error("Installation Error", error_msg, "error")
+        except Exception as e:
+            error_msg = f"Failed to install ffmpeg:\n\n{str(e)}\n\n{traceback.format_exc()}"
+            self._show_error("Error", error_msg, "error")
+
+    def detect_video_players(self):
+        """Detect available video players on the system."""
+        try:
+            logger.info("Detecting available video players...")
+            self.available_players = []
+
+            for player in self.PREFERRED_PLAYERS:
+                if shutil.which(player):
+                    self.available_players.append(player)
+                    logger.debug(f"Found video player: {player}")
+
+            if self.available_players:
+                self.preferred_player = self.available_players[0]
+                logger.info(f"Available players: {', '.join(self.available_players)}")
+                logger.info(f"Preferred player: {self.preferred_player}")
+            else:
+                logger.warning("No video players detected on system")
+                self.preferred_player = None
+
+        except Exception as e:
+            logger.error(f"Error detecting video players: {str(e)}")
+            self.available_players = []
+            self.preferred_player = None
+
+    def play_video(self, video_path):
+        """Play video using best available player."""
+        try:
+            video_path = Path(video_path)
+            if not video_path.exists():
+                self._show_error("Error", f"Video file not found:\n{video_path}", "error")
+                logger.error(f"Video file not found: {video_path}")
+                return
+
+            if not self.available_players:
+                self._show_error(
+                    "No Player Found",
+                    "No video player detected on your system.\n\n"
+                    "Please install one of these players:\n"
+                    "• VLC (vlc)\n"
+                    "• MPV (mpv)\n"
+                    "• Cinelerra (cinelerra)\n"
+                    "• FFplay (ffplay)\n\n"
+                    "On Linux: sudo apt-get install vlc\n"
+                    "On macOS: brew install vlc\n"
+                    "On Windows: Download from videolan.org",
+                    "error"
+                )
+                logger.error("No video players available")
+                return
+
+            # Try to play with preferred player
+            player = self.preferred_player
+            logger.info(f"Playing video with {player}: {video_path}")
+
+            try:
+                # Use subprocess.Popen to run player in background
+                subprocess.Popen([player, str(video_path)])
+                self.status_bar.config(text=f"▶️ Playing: {video_path.name}")
+                logger.info(f"Video playback started: {video_path.name}")
+            except Exception as e:
+                logger.error(f"Failed to play with {player}: {str(e)}")
+                # Try next available player
+                for alt_player in self.available_players[1:]:
+                    try:
+                        logger.info(f"Trying alternative player: {alt_player}")
+                        subprocess.Popen([alt_player, str(video_path)])
+                        self.status_bar.config(text=f"▶️ Playing: {video_path.name}")
+                        logger.info(f"Video playback started with {alt_player}: {video_path.name}")
+                        return
+                    except Exception as alt_e:
+                        logger.debug(f"Failed with {alt_player}: {str(alt_e)}")
+                        continue
+
+                # All players failed
+                error_msg = f"Failed to play video with any available player:\n\n{str(e)}"
+                self._show_error("Playback Error", error_msg, "error")
+
+        except Exception as e:
+            error_msg = f"Error playing video:\n\n{str(e)}\n\n{traceback.format_exc()}"
+            logger.error(f"Error playing video: {error_msg}")
+            self._show_error("Error", error_msg, "error")
+
+    def setup_ui(self):
+        """Setup the user interface with improved layout."""
+        # Title bar
+        title_frame = ttk.Frame(self.root)
+        title_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=10)
+        ttk.Label(title_frame, text="📸 Slideshow Manager", font=("Arial", 14, "bold")).pack(side=tk.LEFT)
+
+        # Control panel - organized in sections
+        control_frame = ttk.LabelFrame(self.root, text="Controls", padding=10)
+        control_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
+
+        # Left section - File operations
+        left_section = ttk.Frame(control_frame)
+        left_section.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        ttk.Button(left_section, text="➕ Add Images", command=self.add_images).pack(side=tk.LEFT, padx=5)
+        ttk.Button(left_section, text="🔄 Refresh", command=self.load_images).pack(side=tk.LEFT, padx=5)
+
+        # Middle section - Sort and Search
+        middle_section = ttk.Frame(control_frame)
+        middle_section.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=20)
+
+        ttk.Label(middle_section, text="Sort by:").pack(side=tk.LEFT, padx=5)
+        self.sort_var = tk.StringVar(value="name")
+        sort_menu = ttk.Combobox(middle_section, textvariable=self.sort_var,
+                                  values=["name", "date modified", "file size"], state="readonly", width=15)
+        sort_menu.pack(side=tk.LEFT, padx=5)
+        sort_menu.bind("<<ComboboxSelected>>", lambda e: self.load_images())
+
+        ttk.Label(middle_section, text="Search:").pack(side=tk.LEFT, padx=5)
+        self.search_var = tk.StringVar()
+        search_entry = ttk.Entry(middle_section, textvariable=self.search_var, width=20)
+        search_entry.pack(side=tk.LEFT, padx=5)
+        search_entry.bind("<KeyRelease>", lambda e: self.load_images())
+
+        # Right section - Create slideshow and error log
+        right_section = ttk.Frame(control_frame)
+        right_section.pack(side=tk.RIGHT)
+        ttk.Button(right_section, text="🎬 Create Slideshow", command=self.create_slideshow).pack(side=tk.LEFT, padx=5)
+        ttk.Button(right_section, text="📋 Error Log", command=self.show_error_log).pack(side=tk.LEFT, padx=5)
+
+        # Stats bar
+        self.stats_frame = ttk.LabelFrame(self.root, text="Statistics", padding=10)
+        self.stats_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
+
+        self.stats_label = ttk.Label(self.stats_frame, text="Loading...", font=("Arial", 10))
+        self.stats_label.pack(side=tk.LEFT)
+
+        # Main canvas with scrollbar
+        canvas_frame = ttk.Frame(self.root)
+        canvas_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        scrollbar = ttk.Scrollbar(canvas_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.canvas = tk.Canvas(canvas_frame, yscrollcommand=scrollbar.set, bg="gray20", highlightthickness=0)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=self.canvas.yview)
+
+        self.frame = ttk.Frame(self.canvas)
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.frame, anchor="nw")
+
+        self.frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind("<MouseWheel>", self._on_mousewheel)
+        self.canvas.bind("<Button-4>", self._on_mousewheel)
+        self.canvas.bind("<Button-5>", self._on_mousewheel)
+
+        # Status bar at bottom
+        self.status_bar = ttk.Label(self.root, text="Ready", relief=tk.SUNKEN, anchor=tk.W)
+        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=5)
+    
+    def _on_mousewheel(self, event):
+        """Handle mouse wheel scrolling."""
+        if event.num == 5 or event.delta < 0:
+            self.canvas.yview_scroll(1, "units")
+        elif event.num == 4 or event.delta > 0:
+            self.canvas.yview_scroll(-1, "units")
+    
+    def load_config(self):
+        """Load configuration from file."""
+        if Path(self.CONFIG_FILE).exists():
+            try:
+                logger.info(f"Loading configuration from {self.CONFIG_FILE}")
+                with open(self.CONFIG_FILE, 'r') as f:
+                    config = json.load(f)
+                    self.hidden_images = set(config.get("hidden", []))
+                logger.info(f"Loaded {len(self.hidden_images)} hidden images from config")
+            except json.JSONDecodeError as e:
+                error_msg = f"Configuration file is corrupted:\n\n{str(e)}\n\nDeleting corrupted config..."
+                logger.error(f"JSON decode error loading config: {error_msg}")
+                try:
+                    Path(self.CONFIG_FILE).unlink()
+                    logger.info("Deleted corrupted config file")
+                except Exception as delete_err:
+                    logger.error(f"Failed to delete corrupted config: {delete_err}")
+            except Exception as e:
+                error_msg = f"Failed to load configuration:\n\n{str(e)}\n\n{traceback.format_exc()}"
+                logger.error(f"Error loading config: {error_msg}")
+
+    def save_config(self):
+        """Save configuration to file."""
+        try:
+            config = {"hidden": list(self.hidden_images)}
+            with open(self.CONFIG_FILE, 'w') as f:
+                json.dump(config, f, indent=2)
+            logger.debug(f"Saved configuration with {len(self.hidden_images)} hidden images")
+        except Exception as e:
+            error_msg = f"Failed to save configuration:\n\n{str(e)}\n\n{traceback.format_exc()}"
+            logger.error(f"Error saving config: {error_msg}")
+    
+    def load_images(self):
+        """Load and display images with improved UX."""
+        try:
+            logger.debug("Loading images...")
+            # Clear existing widgets
+            for widget in self.frame.winfo_children():
+                widget.destroy()
+
+            # Get all image files
+            all_images = list(Path.cwd().glob("*.jpg")) + list(Path.cwd().glob("*.JPG")) + \
+                         list(Path.cwd().glob("*.png")) + list(Path.cwd().glob("*.PNG"))
+            logger.debug(f"Found {len(all_images)} image files")
+
+            # Filter by search
+            search_term = self.search_var.get().lower()
+            self.images = [img for img in all_images if search_term in img.name.lower()]
+
+            # Sort
+            sort_by = self.sort_var.get()
+            if sort_by == "name":
+                self.images.sort(key=lambda x: x.name)
+            elif sort_by == "date modified":
+                self.images.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+            elif sort_by == "file size":
+                self.images.sort(key=lambda x: x.stat().st_size, reverse=True)
+
+            # Update statistics
+            visible_count = len([img for img in self.images if str(img) not in self.hidden_images])
+            hidden_count = len(self.hidden_images)
+            total_size = sum(img.stat().st_size for img in self.images) / (1024 * 1024)
+
+            stats_text = f"Total: {len(self.images)} images | Visible: {visible_count} | Hidden: {hidden_count} | Size: {total_size:.1f} MB"
+            self.stats_label.config(text=stats_text)
+            logger.debug(f"Statistics: {stats_text}")
+
+            # Display images or empty state
+            if not self.images:
+                empty_frame = ttk.Frame(self.frame)
+                empty_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=40)
+
+                ttk.Label(empty_frame, text="📁 No images found", font=("Arial", 16, "bold")).pack(pady=10)
+                ttk.Label(empty_frame, text="Click 'Add Images' to get started", font=("Arial", 12)).pack(pady=5)
+
+                self.status_bar.config(text="No images in current directory")
+                logger.info("No images found in current directory")
+            else:
+                for img_path in self.images:
+                    self.create_image_widget(img_path)
+
+                self.status_bar.config(text=f"Loaded {len(self.images)} image(s)")
+                logger.info(f"Successfully loaded {len(self.images)} image(s)")
+        except Exception as e:
+            error_msg = f"Failed to load images:\n\n{str(e)}\n\n{traceback.format_exc()}"
+            logger.error(f"Error loading images: {error_msg}")
+            self._show_error("Error", error_msg, "error")
+    
+    def create_image_widget(self, img_path):
+        """Create a widget for an image with improved UX."""
+        is_hidden = str(img_path) in self.hidden_images
+
+        # Image frame with better styling
+        img_frame = tk.Frame(self.frame, bg="gray30", relief=tk.RAISED, borderwidth=1)
+        img_frame.pack(fill=tk.X, padx=8, pady=6)
+
+        # Thumbnail with border
+        thumb = self.get_thumbnail(img_path)
+        thumb_label = tk.Label(img_frame, image=thumb, bg="gray20", relief=tk.SUNKEN, borderwidth=2)
+        thumb_label.image = thumb
+        thumb_label.pack(side=tk.LEFT, padx=8, pady=8)
+
+        # Info frame
+        info_frame = tk.Frame(img_frame, bg="gray30")
+        info_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=8, pady=8)
+
+        # Filename with better styling
+        filename_frame = tk.Frame(info_frame, bg="gray30")
+        filename_frame.pack(fill=tk.X, pady=4)
+        ttk.Label(filename_frame, text="📄", font=("Arial", 10)).pack(side=tk.LEFT, padx=2)
+        filename_label = tk.Label(filename_frame, text=img_path.name, fg="cyan", bg="gray30",
+                                   font=("Arial", 10, "bold"), wraplength=300, justify=tk.LEFT)
+        filename_label.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+
+        # File info with better formatting
+        stat = img_path.stat()
+        size_mb = stat.st_size / (1024 * 1024)
+        date_str = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
+
+        info_text = f"📊 {size_mb:.2f} MB  |  📅 {date_str}"
+        ttk.Label(info_frame, text=info_text, foreground="gray80").pack(anchor=tk.W, pady=2)
+
+        # Status badge
+        status_text = "🚫 HIDDEN" if is_hidden else "✅ INCLUDED"
+        status_color = "orange" if is_hidden else "green"
+        status_label = tk.Label(info_frame, text=status_text, fg=status_color, bg="gray30",
+                                font=("Arial", 9, "bold"))
+        status_label.pack(anchor=tk.W, pady=2)
+
+        # Buttons frame with better layout
+        btn_frame = tk.Frame(img_frame, bg="gray30")
+        btn_frame.pack(side=tk.RIGHT, padx=8, pady=8)
+
+        ttk.Button(btn_frame, text="✏️ Rename",
+                  command=lambda: self.rename_image(img_path)).pack(side=tk.LEFT, padx=3, pady=2)
+
+        toggle_text = "👁️ Show" if is_hidden else "👁️‍🗨️ Hide"
+        ttk.Button(btn_frame, text=toggle_text,
+                  command=lambda: self.toggle_hide(img_path)).pack(side=tk.LEFT, padx=3, pady=2)
+
+        ttk.Button(btn_frame, text="🗑️ Remove",
+                  command=lambda: self.remove_image(img_path)).pack(side=tk.LEFT, padx=3, pady=2)
+    
+    def get_thumbnail(self, img_path, size=(100, 100)):
+        """Get or create thumbnail."""
+        key = str(img_path)
+        if key not in self.thumbnails:
+            try:
+                logger.debug(f"Creating thumbnail for {img_path.name}")
+                img = Image.open(img_path)
+                img.thumbnail(size)
+                self.thumbnails[key] = ImageTk.PhotoImage(img)
+            except Exception as e:
+                error_msg = f"Error loading thumbnail for {img_path.name}:\n\n{str(e)}"
+                logger.warning(f"Thumbnail error: {error_msg}")
+                # Return None instead of crashing
+                self.thumbnails[key] = None
+        return self.thumbnails.get(key)
+    
+    def add_images(self):
+        """Add images from file dialog with improved feedback."""
+        try:
+            logger.info("Opening file dialog to add images")
+            files = filedialog.askopenfilenames(
+                title="Select images to add",
+                filetypes=[("Image files", "*.jpg *.JPG *.png *.PNG"), ("All files", "*.*")]
+            )
+            if files:
+                logger.info(f"Selected {len(files)} image(s) to add")
+
+                # Copy selected images to current directory
+                import shutil
+                copied_count = 0
+                skipped_count = 0
+
+                for file_path in files:
+                    try:
+                        src = Path(file_path)
+                        dst = Path.cwd() / src.name
+
+                        # Check if file already exists in current directory
+                        if dst.exists():
+                            logger.debug(f"Image already exists: {dst.name}")
+                            skipped_count += 1
+                        else:
+                            # Copy file to current directory
+                            shutil.copy2(src, dst)
+                            logger.info(f"Copied image: {dst.name}")
+                            copied_count += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to copy {file_path}: {str(e)}")
+                        skipped_count += 1
+
+                # Update status
+                total_added = copied_count + skipped_count
+                if copied_count > 0:
+                    msg = f"✅ Added {copied_count} image(s)"
+                    if skipped_count > 0:
+                        msg += f" ({skipped_count} already existed)"
+                    self.status_bar.config(text=msg)
+                    messagebox.showinfo("Success", msg)
+                    logger.info(f"Successfully added {copied_count} image(s), skipped {skipped_count}")
+                else:
+                    msg = f"⚠️ All {skipped_count} image(s) already existed"
+                    self.status_bar.config(text=msg)
+                    messagebox.showwarning("Info", msg)
+                    logger.info(f"All images already existed")
+
+                # Reload images to display them
+                self.load_images()
+        except Exception as e:
+            error_msg = f"Failed to add images:\n\n{str(e)}\n\n{traceback.format_exc()}"
+            logger.error(f"Error adding images: {error_msg}")
+            self._show_error("Error", error_msg, "error")
+
+    def rename_image(self, img_path):
+        """Rename an image with validation."""
+        current_name = img_path.stem
+        new_name = simpledialog.askstring(
+            "Rename Image",
+            f"Current name: {img_path.name}\n\nEnter new name (without extension):",
+            initialvalue=current_name
+        )
+        if new_name and new_name != current_name:
+            if not new_name.endswith(img_path.suffix):
+                new_name += img_path.suffix
+            new_path = img_path.parent / new_name
+
+            # Check if file already exists
+            if new_path.exists():
+                logger.warning(f"File already exists: {new_name}")
+                self._show_error("Error", f"File '{new_name}' already exists", "error")
+                return
+
+            try:
+                logger.info(f"Renaming {img_path.name} to {new_name}")
+                img_path.rename(new_path)
+                self.load_images()
+                messagebox.showinfo("Success", f"✅ Renamed to {new_name}")
+                self.status_bar.config(text=f"Renamed: {new_name}")
+                logger.info(f"Successfully renamed {img_path.name} to {new_name}")
+            except PermissionError as e:
+                error_msg = f"Permission denied when renaming:\n\n{str(e)}\n\nCheck file permissions."
+                logger.error(f"Permission error renaming {img_path.name}: {e}")
+                self._show_error("Permission Error", error_msg, "error")
+            except Exception as e:
+                error_msg = f"Failed to rename:\n\n{str(e)}\n\n{traceback.format_exc()}"
+                logger.error(f"Failed to rename {img_path.name}: {error_msg}")
+                self._show_error("Error", error_msg, "error")
+    
+    def toggle_hide(self, img_path):
+        """Toggle hide status of an image with feedback."""
+        key = str(img_path)
+        if key in self.hidden_images:
+            self.hidden_images.remove(key)
+            action = "shown"
+            emoji = "👁️"
+        else:
+            self.hidden_images.add(key)
+            action = "hidden"
+            emoji = "🚫"
+
+        self.save_config()
+        self.load_images()
+        self.status_bar.config(text=f"{emoji} Image {action}: {img_path.name}")
+        logging.info(f"Image {action}: {img_path.name}")
+
+    def remove_image(self, img_path):
+        """Remove an image with confirmation."""
+        if messagebox.askyesno(
+            "Confirm Delete",
+            f"Are you sure you want to permanently delete:\n\n{img_path.name}?\n\nThis cannot be undone."
+        ):
+            try:
+                logger.info(f"Deleting image: {img_path.name}")
+                img_path.unlink()
+                self.load_images()
+                messagebox.showinfo("Success", f"✅ Image deleted: {img_path.name}")
+                self.status_bar.config(text=f"Deleted: {img_path.name}")
+                logger.info(f"Successfully deleted image: {img_path.name}")
+            except PermissionError as e:
+                error_msg = f"Permission denied when deleting:\n\n{str(e)}\n\nCheck file permissions."
+                logger.error(f"Permission error deleting {img_path.name}: {e}")
+                self._show_error("Permission Error", error_msg, "error")
+            except Exception as e:
+                error_msg = f"Failed to delete:\n\n{str(e)}\n\n{traceback.format_exc()}"
+                logger.error(f"Failed to delete {img_path.name}: {error_msg}")
+                self._show_error("Error", error_msg, "error")
+    
+    def create_slideshow(self):
+        """Create slideshow from visible images with improved UX."""
+        if self.is_creating:
+            logger.warning("Slideshow creation already in progress")
+            self._show_warning(
+                "In Progress",
+                "A slideshow is already being created. Please wait.",
+            )
+            return
+
+        visible_images = [img for img in self.images if str(img) not in self.hidden_images]
+
+        if not visible_images:
+            logger.warning("No visible images to create slideshow")
+            self._show_warning(
+                "No Visible Images",
+                "All images are hidden. Please show some images first.\n\n"
+                "Tip: Click 'Show' on hidden images to include them in the slideshow."
+            )
+            return
+
+        if len(visible_images) < 2:
+            logger.warning(f"Too few images: {len(visible_images)}")
+            self._show_warning(
+                "Too Few Images",
+                f"You need at least 2 images to create a slideshow.\n"
+                f"Currently visible: {len(visible_images)}"
+            )
+            return
+
+        output_name = simpledialog.askstring(
+            "Slideshow Name",
+            f"Enter slideshow name:\n\n"
+            f"(Using {len(visible_images)} visible image(s))",
+            initialvalue=f"slideshow_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+        )
+
+        if not output_name:
+            return
+
+        if not output_name.endswith(".mp4"):
+            output_name += ".mp4"
+
+        # Check if file already exists
+        if Path(output_name).exists():
+            if not messagebox.askyesno("File Exists", f"{output_name} already exists. Overwrite?"):
+                return
+
+        # Run in thread to avoid freezing UI
+        self.is_creating = True
+        thread = threading.Thread(target=self._create_slideshow_thread, args=(output_name, visible_images))
+        thread.daemon = True
+        thread.start()
+
+    def _show_slideshow_success(self, video_path, message):
+        """Show success dialog with play button."""
+        try:
+            dialog = tk.Toplevel(self.root)
+            dialog.title("✅ Slideshow Created")
+            dialog.geometry("500x300")
+            dialog.resizable(False, False)
+
+            # Center on parent
+            dialog.transient(self.root)
+            dialog.grab_set()
+
+            # Message
+            msg_frame = ttk.Frame(dialog)
+            msg_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+            ttk.Label(msg_frame, text=message, font=("Arial", 10), justify=tk.LEFT).pack(anchor=tk.W)
+
+            # Buttons
+            btn_frame = ttk.Frame(dialog)
+            btn_frame.pack(fill=tk.X, padx=20, pady=10)
+
+            # Play button (only if players available)
+            if self.available_players:
+                player_info = f"({self.preferred_player})"
+                ttk.Button(
+                    btn_frame,
+                    text=f"▶️ Play {player_info}",
+                    command=lambda: (self.play_video(video_path), dialog.destroy())
+                ).pack(side=tk.LEFT, padx=5)
+
+            ttk.Button(btn_frame, text="📁 Open Folder", command=lambda: self._open_folder(video_path)).pack(side=tk.LEFT, padx=5)
+            ttk.Button(btn_frame, text="✅ Close", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+
+            logger.debug(f"Slideshow success dialog shown for: {video_path}")
+
+        except Exception as e:
+            logger.error(f"Error showing success dialog: {str(e)}")
+            messagebox.showinfo("Success", message)
+
+    def _open_folder(self, file_path):
+        """Open folder containing the file."""
+        try:
+            file_path = Path(file_path)
+            folder = file_path.parent
+
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", str(folder)])
+            elif sys.platform == "linux":
+                subprocess.Popen(["xdg-open", str(folder)])
+            elif sys.platform == "win32":
+                subprocess.Popen(["explorer", str(folder)])
+
+            logger.info(f"Opened folder: {folder}")
+        except Exception as e:
+            logger.error(f"Error opening folder: {str(e)}")
+            self._show_error("Error", f"Failed to open folder:\n{str(e)}", "error")
+
+    def _create_slideshow_thread(self, output_name, visible_images):
+        """Create slideshow in background thread with progress feedback."""
+        try:
+            self.root.after(0, lambda: self.status_bar.config(text="🎬 Creating slideshow..."))
+            logger.info(f"Starting slideshow creation: {output_name}")
+            logger.info(f"Images: {len(visible_images)}, Output: {output_name}")
+
+            # Create temporary directory with symlinks to visible images
+            temp_dir = Path(".slideshow_temp")
+            temp_dir.mkdir(exist_ok=True)
+            logger.debug(f"Created temp directory: {temp_dir}")
+
+            # Create numbered symlinks with consistent PNG extension for FFmpeg image2 demuxer
+            # Convert all to PNG pattern so FFmpeg can find them with %04d.png
+            for i, img_path in enumerate(visible_images):
+                # Create symlink with simple numbered name and .png extension
+                link_path = temp_dir / f"{i+1:04d}.png"
+                if link_path.exists():
+                    link_path.unlink()
+                link_path.symlink_to(img_path.resolve())
+            logger.debug(f"Created {len(visible_images)} symlinks in temp directory")
+
+            # Use image2 demuxer with sequential numbering (original working method)
+            # This avoids green artifacts from concat demuxer
+            cmd = [
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-framerate", "1/5",
+                "-i", str(temp_dir / "%04d.png"),
+                "-vf", (
+                    "format=yuv420p,"
+                    "scale='min(1920,iw*min(1920/iw\\,1080/ih))':'min(1080,ih*min(1920/iw\\,1080/ih))':force_original_aspect_ratio=decrease,"
+                    "pad=1920:1080:(1920-iw)/2:(1080-ih)/2"
+                ),
+                "-c:v", "libx264",
+                "-r", "30",
+                "-pix_fmt", "yuv420p",
+                output_name
+            ]
+
+            logger.debug(f"Running FFmpeg command: {' '.join(cmd)}")
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            logger.debug(f"FFmpeg completed successfully")
+
+            # Cleanup
+            for file in temp_dir.glob("*"):
+                file.unlink()
+            temp_dir.rmdir()
+            logger.debug("Cleaned up temporary directory")
+
+            file_size = Path(output_name).stat().st_size / (1024 * 1024)
+            success_msg = (
+                f"✅ Slideshow created successfully!\n\n"
+                f"File: {output_name}\n"
+                f"Size: {file_size:.1f} MB\n"
+                f"Images: {len(visible_images)}\n"
+                f"Duration: ~{len(visible_images) * 5} seconds"
+            )
+
+            # Show success dialog with play option
+            self.root.after(0, lambda: self._show_slideshow_success(output_name, success_msg))
+            self.root.after(0, lambda: self.status_bar.config(text=f"✅ Slideshow created: {output_name}"))
+            logger.info(f"Slideshow created successfully: {output_name} ({file_size:.1f} MB)")
+
+        except subprocess.CalledProcessError as e:
+            error_msg = (
+                f"FFmpeg Error\n\n"
+                f"Return Code: {e.returncode}\n"
+                f"Command: {' '.join(e.cmd)}\n\n"
+                f"STDOUT:\n{e.stdout}\n\n"
+                f"STDERR:\n{e.stderr}"
+            )
+            logger.error(f"FFmpeg error: {error_msg}")
+            self.root.after(0, lambda: self._show_error("FFmpeg Error", error_msg, "error"))
+            self.root.after(0, lambda: self.status_bar.config(text="❌ Failed to create slideshow"))
+
+        except Exception as e:
+            error_msg = f"Failed to create slideshow:\n\n{str(e)}\n\n{traceback.format_exc()}"
+            logger.error(f"Error creating slideshow: {error_msg}")
+            self.root.after(0, lambda: self._show_error("Error", error_msg, "error"))
+            self.root.after(0, lambda: self.status_bar.config(text="❌ Error creating slideshow"))
+
+        finally:
+            self.is_creating = False
+            logger.info("Slideshow creation thread finished")
+
+
+def main():
+    """Main function."""
+    root = tk.Tk()
+    app = SlideshowManager(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
+

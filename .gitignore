@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.mp4
+*.log
+.slideshow_temp/
+*.png
+*.jpg
+*.jpeg
+venv/
+.vscode/
+.idea/
