@@ -696,13 +696,13 @@ Features:
     def _show_video_selection_panel(self, videos):
         """Show video selection panel in main window."""
         try:
-            # If panel already exists, clear it
-            if hasattr(self, 'video_panel_frame') and self.video_panel_frame.winfo_exists():
-                self.video_panel_frame.destroy()
+            # Clear any existing widgets in the container
+            for widget in self.video_panel_container.winfo_children():
+                widget.destroy()
 
-            # Create video selection panel
-            self.video_panel_frame = ttk.LabelFrame(self.root, text="📹 Select Video to Play", padding=10)
-            self.video_panel_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=10, pady=5, after=self.control_frame)
+            # Create video selection panel inside the container
+            self.video_panel_frame = ttk.LabelFrame(self.video_panel_container, text="📹 Select Video to Play", padding=10)
+            self.video_panel_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=0, pady=0)
 
             # Frame for listbox and scrollbar
             list_frame = ttk.Frame(self.video_panel_frame)
@@ -746,13 +746,13 @@ Features:
                     self.play_video(str(selected_video))
                     self.last_slideshow_path = str(selected_video)
                     # Hide panel after playing
-                    self.video_panel_frame.destroy()
+                    self._hide_video_selection_panel()
 
             def open_folder():
                 self._open_folder(self.available_videos_for_selection[0])
 
             def close_panel():
-                self.video_panel_frame.destroy()
+                self._hide_video_selection_panel()
 
             ttk.Button(btn_frame, text="▶️ Play Selected", command=play_selected).pack(side=tk.LEFT, padx=3)
             ttk.Button(btn_frame, text="📁 Open Folder", command=open_folder).pack(side=tk.LEFT, padx=3)
@@ -761,6 +761,14 @@ Features:
         except Exception as e:
             logger.error(f"Error showing video selection panel: {e}")
             messagebox.showerror("Error", f"Error showing video list:\n{str(e)}")
+
+    def _hide_video_selection_panel(self):
+        """Hide the video selection panel."""
+        try:
+            for widget in self.video_panel_container.winfo_children():
+                widget.destroy()
+        except Exception as e:
+            logger.debug(f"Error hiding video selection panel: {e}")
 
     def setup_ui(self):
         """Setup the user interface with improved layout."""
@@ -814,6 +822,10 @@ Features:
         self.play_last_btn.pack(side=tk.LEFT, padx=5)
         ttk.Button(right_section, text="⚙️ Settings", command=self.show_settings_dialog).pack(side=tk.LEFT, padx=5)
         ttk.Button(right_section, text="📋 Error Log", command=self.show_error_log).pack(side=tk.LEFT, padx=5)
+
+        # Video Selection Panel Placeholder (will be populated when needed)
+        self.video_panel_container = ttk.Frame(self.root)
+        self.video_panel_container.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
 
         # Stats bar
         self.stats_frame = ttk.LabelFrame(self.root, text="Statistics", padding=10)
