@@ -172,6 +172,9 @@ class SlideshowManager:
         self.setup_ui()
         self.load_images()
 
+        # Refresh error log display after UI is set up
+        self.root.after(100, self._refresh_error_log_display)
+
         # Center window on screen
         self.root.update_idletasks()
         width = self.root.winfo_width()
@@ -246,8 +249,31 @@ class SlideshowManager:
                 log_file.write_text("")
                 messagebox.showinfo("Success", "✅ Error log cleared!")
                 logger.info("Error log cleared by user")
+                self._refresh_error_log_display()
             except Exception as e:
                 self._show_error("Error", f"Failed to clear log:\n{str(e)}", "error")
+
+    def _refresh_error_log_display(self):
+        """Refresh the embedded error log display with last 10 entries."""
+        try:
+            if not hasattr(self, 'error_log_display'):
+                return
+
+            if log_file.exists():
+                log_content = log_file.read_text()
+                lines = log_content.strip().split('\n')
+                # Show last 10 lines
+                last_lines = '\n'.join(lines[-10:]) if lines else "No errors logged yet"
+            else:
+                last_lines = "No errors logged yet"
+
+            self.error_log_display.config(state=tk.NORMAL)
+            self.error_log_display.delete(1.0, tk.END)
+            self.error_log_display.insert(tk.END, last_lines)
+            self.error_log_display.config(state=tk.DISABLED)
+            self.error_log_display.see(tk.END)
+        except Exception as e:
+            logger.debug(f"Error refreshing log display: {e}")
 
     def _show_error(self, title, message, error_type="error"):
         """Show error dialog with copy-paste capability."""
@@ -260,6 +286,9 @@ class SlideshowManager:
         print(f"{'='*80}")
         print(message)
         print(f"{'='*80}\n")
+
+        # Refresh embedded error log display
+        self._refresh_error_log_display()
 
         # Show custom error dialog
         ErrorDialog(self.root, title, message, error_type)
@@ -275,6 +304,9 @@ class SlideshowManager:
         print(f"{'='*80}")
         print(message)
         print(f"{'='*80}\n")
+
+        # Refresh embedded error log display
+        self._refresh_error_log_display()
 
         # Show custom warning dialog
         ErrorDialog(self.root, title, message, "warning")
@@ -348,7 +380,7 @@ class SlideshowManager:
             self.preferred_player = None
 
     def play_video(self, video_path):
-        """Play video using best available player."""
+        """Play video using selected or best available player."""
         try:
             video_path = Path(video_path)
             if not video_path.exists():
@@ -373,8 +405,15 @@ class SlideshowManager:
                 logger.error("No video players available")
                 return
 
-            # Try to play with preferred player
-            player = self.preferred_player
+            # Get selected player from dropdown
+            selected_player = self.player_var.get()
+            if selected_player == "auto":
+                player = self.preferred_player
+                players_to_try = self.available_players
+            else:
+                player = selected_player
+                players_to_try = [selected_player] + [p for p in self.available_players if p != selected_player]
+
             logger.info(f"Playing video with {player}: {video_path}")
 
             try:
@@ -385,7 +424,7 @@ class SlideshowManager:
             except Exception as e:
                 logger.error(f"Failed to play with {player}: {str(e)}")
                 # Try next available player
-                for alt_player in self.available_players[1:]:
+                for alt_player in players_to_try[1:]:
                     try:
                         logger.info(f"Trying alternative player: {alt_player}")
                         subprocess.Popen([alt_player, str(video_path)])
@@ -440,9 +479,18 @@ class SlideshowManager:
         search_entry.pack(side=tk.LEFT, padx=5)
         search_entry.bind("<KeyRelease>", lambda e: self.load_images())
 
-        # Right section - Create slideshow and error log
+        # Right section - Player selection, Create slideshow and error log
         right_section = ttk.Frame(control_frame)
         right_section.pack(side=tk.RIGHT)
+
+        # Player selection dropdown
+        ttk.Label(right_section, text="Player:").pack(side=tk.LEFT, padx=5)
+        self.player_var = tk.StringVar(value=self.preferred_player or "auto")
+        player_options = ["auto"] + self.available_players
+        player_menu = ttk.Combobox(right_section, textvariable=self.player_var,
+                                    values=player_options, state="readonly", width=12)
+        player_menu.pack(side=tk.LEFT, padx=5)
+
         ttk.Button(right_section, text="🎬 Create Slideshow", command=self.create_slideshow).pack(side=tk.LEFT, padx=5)
         ttk.Button(right_section, text="📋 Error Log", command=self.show_error_log).pack(side=tk.LEFT, padx=5)
 
@@ -452,6 +500,37 @@ class SlideshowManager:
 
         self.stats_label = ttk.Label(self.stats_frame, text="Loading...", font=("Arial", 10))
         self.stats_label.pack(side=tk.LEFT)
+
+        # Error Log Display Panel (embedded in main window)
+        log_panel_frame = ttk.LabelFrame(self.root, text="📋 Error Log (Last 10 entries)", padding=5)
+        log_panel_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
+
+        # Error log text display
+        log_display_frame = ttk.Frame(log_panel_frame)
+        log_display_frame.pack(fill=tk.BOTH, expand=False, padx=5, pady=5)
+
+        log_scrollbar = ttk.Scrollbar(log_display_frame)
+        log_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.error_log_display = scrolledtext.ScrolledText(
+            log_display_frame,
+            height=4,
+            wrap=tk.WORD,
+            font=("Courier", 8),
+            bg="gray20",
+            fg="white",
+            yscrollcommand=log_scrollbar.set
+        )
+        self.error_log_display.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        log_scrollbar.config(command=self.error_log_display.yview)
+        self.error_log_display.config(state=tk.DISABLED)
+
+        # Log control buttons
+        log_btn_frame = ttk.Frame(log_panel_frame)
+        log_btn_frame.pack(fill=tk.X, padx=5, pady=5)
+        ttk.Button(log_btn_frame, text="🔄 Refresh Log", command=self._refresh_error_log_display).pack(side=tk.LEFT, padx=3)
+        ttk.Button(log_btn_frame, text="🗑️ Clear Log", command=self._clear_log).pack(side=tk.LEFT, padx=3)
+        ttk.Button(log_btn_frame, text="📋 Copy All", command=lambda: self._copy_log_text(self.error_log_display)).pack(side=tk.LEFT, padx=3)
 
         # Main canvas with scrollbar
         canvas_frame = ttk.Frame(self.root)
