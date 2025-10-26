@@ -677,17 +677,14 @@ Features:
         """Play the last created slideshow or show video selection panel."""
         try:
             videos = self._get_available_videos()
+            logger.info(f"Found {len(videos)} videos: {[v.name for v in videos]}")
 
             if not videos:
                 messagebox.showwarning("No Videos", "No slideshow videos found in output directory.")
                 return
 
-            # If only one video, play it
-            if len(videos) == 1:
-                self.play_video(str(videos[0]))
-                return
-
-            # If multiple videos, show selection panel in main window
+            # Always show selection panel, even with one video
+            logger.info(f"Showing video selection panel with {len(videos)} video(s)")
             self._show_video_selection_panel(videos)
         except Exception as e:
             logger.error(f"Error playing last slideshow: {e}")
@@ -696,6 +693,8 @@ Features:
     def _show_video_selection_panel(self, videos):
         """Show video selection panel in main window."""
         try:
+            logger.info(f"_show_video_selection_panel called with {len(videos)} videos")
+
             # Clear any existing widgets in the container
             for widget in self.video_panel_container.winfo_children():
                 widget.destroy()
@@ -703,6 +702,7 @@ Features:
             # Create video selection panel inside the container
             self.video_panel_frame = ttk.LabelFrame(self.video_panel_container, text="📹 Select Video to Play", padding=10)
             self.video_panel_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=0, pady=0)
+            logger.info("Video panel frame created and packed")
 
             # Frame for listbox and scrollbar
             list_frame = ttk.Frame(self.video_panel_frame)
@@ -711,11 +711,13 @@ Features:
             scrollbar = ttk.Scrollbar(list_frame)
             scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-            self.video_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, font=("Courier", 9), height=6)
+            self.video_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, font=("Courier", 9), height=8)
             self.video_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
             scrollbar.config(command=self.video_listbox.yview)
+            logger.info("Listbox created")
 
             # Populate listbox with videos
+            logger.info(f"Populating listbox with {len(videos)} videos")
             for i, video in enumerate(videos):
                 try:
                     size_mb = video.stat().st_size / (1024 * 1024)
@@ -724,13 +726,16 @@ Features:
                     date_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
                     display_text = f"{video.name} ({size_mb:.1f} MB) - {date_str}"
                     self.video_listbox.insert(tk.END, display_text)
+                    logger.info(f"Added video {i+1}: {display_text}")
                 except Exception as e:
+                    logger.error(f"Error adding video {i}: {e}")
                     self.video_listbox.insert(tk.END, video.name)
 
             # Select first item by default
             if videos:
                 self.video_listbox.selection_set(0)
                 self.video_listbox.see(0)
+                logger.info("First video selected")
 
             # Store videos reference for button callbacks
             self.available_videos_for_selection = videos
@@ -738,28 +743,36 @@ Features:
             # Buttons frame
             btn_frame = ttk.Frame(self.video_panel_frame)
             btn_frame.pack(fill=tk.X, padx=5, pady=5)
+            logger.info("Buttons frame created")
 
             def play_selected():
+                logger.info("Play Selected button clicked")
                 selection = self.video_listbox.curselection()
+                logger.info(f"Selection: {selection}")
                 if selection:
                     selected_video = self.available_videos_for_selection[selection[0]]
+                    logger.info(f"Playing: {selected_video}")
                     self.play_video(str(selected_video))
                     self.last_slideshow_path = str(selected_video)
                     # Hide panel after playing
                     self._hide_video_selection_panel()
 
             def open_folder():
+                logger.info("Open Folder button clicked")
                 self._open_folder(self.available_videos_for_selection[0])
 
             def close_panel():
+                logger.info("Close button clicked")
                 self._hide_video_selection_panel()
 
             ttk.Button(btn_frame, text="▶️ Play Selected", command=play_selected).pack(side=tk.LEFT, padx=3)
             ttk.Button(btn_frame, text="📁 Open Folder", command=open_folder).pack(side=tk.LEFT, padx=3)
             ttk.Button(btn_frame, text="❌ Close", command=close_panel).pack(side=tk.RIGHT, padx=3)
+            logger.info("All buttons created and packed")
 
         except Exception as e:
             logger.error(f"Error showing video selection panel: {e}")
+            logger.error(traceback.format_exc())
             messagebox.showerror("Error", f"Error showing video list:\n{str(e)}")
 
     def _hide_video_selection_panel(self):
