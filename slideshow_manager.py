@@ -175,6 +175,9 @@ class SlideshowManager:
         self.setup_ui()
         self.load_images()
 
+        # Update play button state based on existing videos
+        self._update_play_button_state()
+
         # Refresh error log display after UI is set up
         self.root.after(100, self._refresh_error_log_display)
 
@@ -645,19 +648,116 @@ Features:
             logger.error(f"Error playing video: {error_msg}")
             self._show_error("Error", error_msg, "error")
 
+    def _get_available_videos(self):
+        """Get list of available MP4 videos in output directory."""
+        try:
+            if not self.output_directory.exists():
+                return []
+            videos = sorted(self.output_directory.glob("*.mp4"), key=lambda x: x.stat().st_mtime, reverse=True)
+            return videos
+        except Exception as e:
+            logger.debug(f"Error getting available videos: {e}")
+            return []
+
+    def _update_play_button_state(self):
+        """Update play button state based on available videos."""
+        try:
+            videos = self._get_available_videos()
+            if videos and not self.last_slideshow_path:
+                # Set to most recent video
+                self.last_slideshow_path = str(videos[0])
+                self.play_last_btn.config(state=tk.NORMAL)
+            elif not videos:
+                self.last_slideshow_path = None
+                self.play_last_btn.config(state=tk.DISABLED)
+        except Exception as e:
+            logger.debug(f"Error updating play button state: {e}")
+
     def _play_last_slideshow(self):
-        """Play the last created slideshow."""
-        if not self.last_slideshow_path:
-            messagebox.showwarning("No Slideshow", "No slideshow has been created yet.")
-            return
+        """Play the last created slideshow or show video selection dialog."""
+        try:
+            videos = self._get_available_videos()
 
-        if not Path(self.last_slideshow_path).exists():
-            messagebox.showerror("File Not Found", f"Slideshow file not found:\n{self.last_slideshow_path}")
-            self.last_slideshow_path = None
-            self.play_last_btn.config(state=tk.DISABLED)
-            return
+            if not videos:
+                messagebox.showwarning("No Videos", "No slideshow videos found in output directory.")
+                return
 
-        self.play_video(self.last_slideshow_path)
+            # If only one video, play it
+            if len(videos) == 1:
+                self.play_video(str(videos[0]))
+                return
+
+            # If multiple videos, show selection dialog
+            self._show_video_selection_dialog(videos)
+        except Exception as e:
+            logger.error(f"Error playing last slideshow: {e}")
+            messagebox.showerror("Error", f"Error playing video:\n{str(e)}")
+
+    def _show_video_selection_dialog(self, videos):
+        """Show dialog to select which video to play."""
+        try:
+            dialog = tk.Toplevel(self.root)
+            dialog.title("📹 Select Video to Play")
+            dialog.geometry("600x400")
+            dialog.resizable(True, True)
+
+            # Title
+            ttk.Label(dialog, text="Available Slideshows", font=("Arial", 12, "bold")).pack(pady=10)
+
+            # Frame for listbox and scrollbar
+            list_frame = ttk.Frame(dialog)
+            list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+            scrollbar = ttk.Scrollbar(list_frame)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+            listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, font=("Courier", 9))
+            listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            scrollbar.config(command=listbox.yview)
+
+            # Populate listbox with videos
+            for i, video in enumerate(videos):
+                try:
+                    size_mb = video.stat().st_size / (1024 * 1024)
+                    mtime = video.stat().st_mtime
+                    from datetime import datetime
+                    date_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+                    display_text = f"{video.name} ({size_mb:.1f} MB) - {date_str}"
+                    listbox.insert(tk.END, display_text)
+                except Exception as e:
+                    listbox.insert(tk.END, video.name)
+
+            # Select first item by default
+            if videos:
+                listbox.selection_set(0)
+                listbox.see(0)
+
+            # Buttons frame
+            btn_frame = ttk.Frame(dialog)
+            btn_frame.pack(fill=tk.X, padx=10, pady=10)
+
+            def play_selected():
+                selection = listbox.curselection()
+                if selection:
+                    selected_video = videos[selection[0]]
+                    dialog.destroy()
+                    self.play_video(str(selected_video))
+                    self.last_slideshow_path = str(selected_video)
+
+            def open_folder():
+                self._open_folder(videos[0])
+
+            ttk.Button(btn_frame, text="▶️ Play Selected", command=play_selected).pack(side=tk.LEFT, padx=5)
+            ttk.Button(btn_frame, text="📁 Open Folder", command=open_folder).pack(side=tk.LEFT, padx=5)
+            ttk.Button(btn_frame, text="❌ Cancel", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+
+            # Make dialog modal
+            dialog.transient(self.root)
+            dialog.grab_set()
+
+        except Exception as e:
+            logger.error(f"Error showing video selection dialog: {e}")
+            messagebox.showerror("Error", f"Error showing video list:\n{str(e)}")
 
     def setup_ui(self):
         """Setup the user interface with improved layout."""
