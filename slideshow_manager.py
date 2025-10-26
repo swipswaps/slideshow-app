@@ -21,6 +21,13 @@ from io import StringIO
 import time
 
 try:
+    import ttkbootstrap as ttk_bootstrap
+    from ttkbootstrap.constants import *
+    HAS_TTKBOOTSTRAP = True
+except ImportError:
+    HAS_TTKBOOTSTRAP = False
+
+try:
     import vlc
     HAS_VLC = True
 except ImportError:
@@ -168,6 +175,9 @@ class SlideshowManager:
         self.output_directory = Path.cwd()  # Output directory for slideshows
         self.preferred_player_setting = "auto"  # User's preferred player setting
         self.last_slideshow_path = None  # Track last created slideshow for quick play
+        self.player_mode = "embedded"  # "embedded" or "standalone"
+        self.vlc_media_player = None  # VLC player instance
+        self.saved_layout = None  # Save layout before showing embedded player
 
         logger.info("=" * 80)
         logger.info("Slideshow Manager Started")
@@ -402,6 +412,34 @@ class SlideshowManager:
             player_info = "• auto: Uses best available player\n• mpv: Lightweight, excellent quality\n• vlc: Most compatible, feature-rich"
             ttk.Label(playback_frame, text=player_info, foreground="gray", font=("Arial", 9), justify=tk.LEFT).pack(anchor=tk.W, pady=(10, 0))
 
+            # Separator
+            ttk.Separator(playback_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=20)
+
+            # Player Mode Section
+            ttk.Label(playback_frame, text="Player Mode", font=("Arial", 11, "bold")).pack(anchor=tk.W, pady=(0, 10))
+            ttk.Label(playback_frame, text="How to play videos:", foreground="gray", font=("Arial", 9)).pack(anchor=tk.W, pady=(0, 10))
+
+            # Player mode radio buttons
+            self.settings_mode_var = tk.StringVar(value=self.player_mode)
+
+            ttk.Radiobutton(
+                playback_frame,
+                text="🎬 Embedded Player (VLC in main window)",
+                variable=self.settings_mode_var,
+                value="embedded"
+            ).pack(anchor=tk.W, pady=5)
+
+            ttk.Radiobutton(
+                playback_frame,
+                text="🖥️ Standalone Player (separate window)",
+                variable=self.settings_mode_var,
+                value="standalone"
+            ).pack(anchor=tk.W, pady=5)
+
+            # Mode info
+            mode_info = "• Embedded: Watch videos in the app window\n• Standalone: Open videos in external player"
+            ttk.Label(playback_frame, text=mode_info, foreground="gray", font=("Arial", 9), justify=tk.LEFT).pack(anchor=tk.W, pady=(10, 0))
+
             # ===== TAB 3: About =====
             about_frame = ttk.Frame(notebook, padding=15)
             notebook.add(about_frame, text="ℹ️ About")
@@ -476,6 +514,10 @@ Features:
             # Save player preference
             self.preferred_player_setting = self.settings_player_var.get()
             self.player_var.set(self.preferred_player_setting)
+
+            # Save player mode
+            self.player_mode = self.settings_mode_var.get()
+            logger.info(f"Player mode set to: {self.player_mode}")
 
             # Save to config file
             self.save_config()
@@ -760,8 +802,12 @@ Features:
                     selected_video = self.available_videos_for_selection[selection[0]]
                     logger.info(f"Playing: {selected_video}")
                     self.last_slideshow_path = str(selected_video)
-                    # Use embedded VLC player
-                    self._create_vlc_player_panel(str(selected_video))
+                    # Use embedded or standalone player based on setting
+                    if self.player_mode == "embedded" and HAS_VLC:
+                        self._create_vlc_player_panel(str(selected_video))
+                    else:
+                        self.play_video(str(selected_video))
+                        self._hide_video_selection_panel()
 
             def open_folder():
                 logger.info("Open Folder button clicked")
@@ -790,6 +836,18 @@ Features:
         except Exception as e:
             logger.debug(f"Error hiding video selection panel: {e}")
 
+    def _restore_layout(self):
+        """Restore the layout after embedded player is closed."""
+        try:
+            logger.info("Restoring layout after player close")
+            # Clear the video panel container
+            for widget in self.video_panel_container.winfo_children():
+                widget.destroy()
+            # Reset saved layout
+            self.saved_layout = None
+        except Exception as e:
+            logger.error(f"Error restoring layout: {e}")
+
     def _create_vlc_player_panel(self, video_path):
         """Create an embedded VLC player panel in the main window."""
         try:
@@ -799,6 +857,12 @@ Features:
                 return
 
             logger.info(f"Creating embedded VLC player for: {video_path}")
+
+            # Save current layout before showing player
+            self.saved_layout = {
+                'video_panel_visible': True,
+                'main_content_visible': True
+            }
 
             # Clear the video panel container
             for widget in self.video_panel_container.winfo_children():
@@ -848,7 +912,7 @@ Features:
             def stop():
                 logger.info("Stop button clicked")
                 self.vlc_media_player.stop()
-                self._hide_video_selection_panel()
+                self._restore_layout()
 
             ttk.Button(btn_frame, text="▶️ Play", command=play).pack(side=tk.LEFT, padx=3)
             ttk.Button(btn_frame, text="⏸️ Pause", command=pause).pack(side=tk.LEFT, padx=3)
@@ -1002,6 +1066,7 @@ Features:
                     # Load settings
                     self.output_directory = Path(config.get("output_directory", str(Path.cwd())))
                     self.preferred_player_setting = config.get("preferred_player", "auto")
+                    self.player_mode = config.get("player_mode", "embedded")
                 logger.info(f"Loaded {len(self.hidden_images)} hidden images from config")
                 logger.info(f"Output directory: {self.output_directory}")
             except json.JSONDecodeError as e:
@@ -1022,7 +1087,8 @@ Features:
             config = {
                 "hidden": list(self.hidden_images),
                 "output_directory": str(self.output_directory),
-                "preferred_player": self.preferred_player_setting
+                "preferred_player": self.preferred_player_setting,
+                "player_mode": self.player_mode
             }
             with open(self.CONFIG_FILE, 'w') as f:
                 json.dump(config, f, indent=2)
