@@ -816,18 +816,21 @@ Features:
             window_id = canvas.winfo_id()
             logger.info(f"Canvas window ID: {window_id}")
 
-            # Create VLC instance and player
+            # Create VLC instance and media player
             instance = vlc.Instance()
-            self.vlc_player = instance.media_list_player_new()
-            media_player = self.vlc_player.get_media_player()
+            self.vlc_media_player = instance.media_list_player_new()
+            media_player = self.vlc_media_player.get_media_player()
 
             # Embed player into canvas
             media_player.set_xwindow(window_id)
             logger.info("VLC player embedded into canvas")
 
-            # Create media and add to playlist
+            # Create media list and add video
+            media_list = instance.media_list_new()
             media = instance.media_new(video_path)
-            self.vlc_player.get_media_list().add_media(media)
+            media_list.add_media(media)
+            self.vlc_media_player.set_media_list(media_list)
+            logger.info(f"Media added to playlist: {video_path}")
 
             # Create control buttons
             btn_frame = ttk.Frame(player_frame)
@@ -835,15 +838,15 @@ Features:
 
             def play():
                 logger.info("Play button clicked")
-                self.vlc_player.play()
+                self.vlc_media_player.play()
 
             def pause():
                 logger.info("Pause button clicked")
-                self.vlc_player.pause()
+                self.vlc_media_player.pause()
 
             def stop():
                 logger.info("Stop button clicked")
-                self.vlc_player.stop()
+                self.vlc_media_player.stop()
                 self._hide_video_selection_panel()
 
             ttk.Button(btn_frame, text="▶️ Play", command=play).pack(side=tk.LEFT, padx=3)
@@ -851,7 +854,7 @@ Features:
             ttk.Button(btn_frame, text="⏹️ Stop", command=stop).pack(side=tk.LEFT, padx=3)
 
             # Start playing
-            self.vlc_player.play()
+            self.vlc_media_player.play()
             logger.info("VLC player started")
 
         except Exception as e:
