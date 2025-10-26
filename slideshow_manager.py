@@ -158,6 +158,8 @@ class SlideshowManager:
         self.warning_count = 0  # Track warnings
         self.available_players = []  # Detected video players
         self.preferred_player = None  # Best available player
+        self.output_directory = Path.cwd()  # Output directory for slideshows
+        self.preferred_player_setting = "auto"  # User's preferred player setting
 
         logger.info("=" * 80)
         logger.info("Slideshow Manager Started")
@@ -274,6 +276,180 @@ class SlideshowManager:
             self.error_log_display.see(tk.END)
         except Exception as e:
             logger.debug(f"Error refreshing log display: {e}")
+
+    def show_settings_dialog(self):
+        """Show settings dialog with elegant UX."""
+        try:
+            settings_window = tk.Toplevel(self.root)
+            settings_window.title("⚙️ Settings")
+            settings_window.geometry("600x500")
+            settings_window.resizable(False, False)
+
+            # Center on parent
+            settings_window.transient(self.root)
+            settings_window.grab_set()
+
+            # Main frame with padding
+            main_frame = ttk.Frame(settings_window, padding=20)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+
+            # Title
+            title_label = ttk.Label(main_frame, text="⚙️ Application Settings", font=("Arial", 14, "bold"))
+            title_label.pack(anchor=tk.W, pady=(0, 20))
+
+            # Create notebook for organized sections
+            notebook = ttk.Notebook(main_frame)
+            notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 20))
+
+            # ===== TAB 1: Output Settings =====
+            output_frame = ttk.Frame(notebook, padding=15)
+            notebook.add(output_frame, text="📁 Output")
+
+            # Output Directory Section
+            ttk.Label(output_frame, text="Output Directory", font=("Arial", 11, "bold")).pack(anchor=tk.W, pady=(0, 10))
+            ttk.Label(output_frame, text="Where to save slideshow videos:", foreground="gray", font=("Arial", 9)).pack(anchor=tk.W, pady=(0, 10))
+
+            # Current directory display
+            dir_display_frame = ttk.Frame(output_frame)
+            dir_display_frame.pack(fill=tk.X, pady=(0, 10))
+
+            self.output_dir_label = ttk.Label(
+                dir_display_frame,
+                text=str(self.output_directory),
+                font=("Courier", 9),
+                foreground="blue",
+                background="gray95",
+                relief=tk.SUNKEN,
+                padding=10
+            )
+            self.output_dir_label.pack(fill=tk.X, side=tk.LEFT, expand=True)
+
+            # Browse button
+            ttk.Button(
+                dir_display_frame,
+                text="📂 Browse",
+                command=self._browse_output_directory
+            ).pack(side=tk.LEFT, padx=(10, 0))
+
+            # Reset to current directory button
+            ttk.Button(
+                output_frame,
+                text="↺ Reset to Current Directory",
+                command=self._reset_output_directory
+            ).pack(fill=tk.X, pady=(0, 20))
+
+            # Info box
+            info_text = "💡 Tip: Slideshows will be saved to the selected directory.\nYou can organize them in different folders."
+            ttk.Label(output_frame, text=info_text, foreground="gray", font=("Arial", 9), justify=tk.LEFT).pack(anchor=tk.W, pady=(10, 0))
+
+            # ===== TAB 2: Playback Settings =====
+            playback_frame = ttk.Frame(notebook, padding=15)
+            notebook.add(playback_frame, text="▶️ Playback")
+
+            # Player Selection Section
+            ttk.Label(playback_frame, text="Video Player", font=("Arial", 11, "bold")).pack(anchor=tk.W, pady=(0, 10))
+            ttk.Label(playback_frame, text="Choose your preferred video player:", foreground="gray", font=("Arial", 9)).pack(anchor=tk.W, pady=(0, 10))
+
+            # Player dropdown
+            player_options = ["auto"] + self.available_players
+            self.settings_player_var = tk.StringVar(value=self.preferred_player_setting)
+
+            player_combo = ttk.Combobox(
+                playback_frame,
+                textvariable=self.settings_player_var,
+                values=player_options,
+                state="readonly",
+                width=30
+            )
+            player_combo.pack(fill=tk.X, pady=(0, 10))
+
+            # Player info
+            player_info = "• auto: Uses best available player\n• mpv: Lightweight, excellent quality\n• vlc: Most compatible, feature-rich"
+            ttk.Label(playback_frame, text=player_info, foreground="gray", font=("Arial", 9), justify=tk.LEFT).pack(anchor=tk.W, pady=(10, 0))
+
+            # ===== TAB 3: About =====
+            about_frame = ttk.Frame(notebook, padding=15)
+            notebook.add(about_frame, text="ℹ️ About")
+
+            about_text = """📸 Slideshow Manager v1.1
+
+Create beautiful slideshows from your images with:
+• Thumbnail preview
+• Image sorting and searching
+• Video player selection
+• Customizable output directory
+• Error logging and monitoring
+
+Features:
+✓ Support for PNG, JPG formats
+✓ Multiple video player support
+✓ Real-time error logging
+✓ Automatic player fallback
+✓ Professional video encoding
+
+© 2025 - All rights reserved"""
+
+            ttk.Label(about_frame, text=about_text, font=("Arial", 10), justify=tk.LEFT).pack(anchor=tk.W, pady=10)
+
+            # ===== Buttons =====
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack(fill=tk.X, side=tk.BOTTOM)
+
+            ttk.Button(
+                button_frame,
+                text="✅ Save & Close",
+                command=lambda: self._save_settings(settings_window)
+            ).pack(side=tk.RIGHT, padx=(5, 0))
+
+            ttk.Button(
+                button_frame,
+                text="❌ Cancel",
+                command=settings_window.destroy
+            ).pack(side=tk.RIGHT, padx=5)
+
+            logger.info("Settings dialog opened")
+
+        except Exception as e:
+            self._show_error("Error", f"Failed to open settings:\n{str(e)}", "error")
+
+    def _browse_output_directory(self):
+        """Browse for output directory."""
+        try:
+            directory = filedialog.askdirectory(
+                title="Select Output Directory for Slideshows",
+                initialdir=str(self.output_directory)
+            )
+            if directory:
+                self.output_directory = Path(directory)
+                self.output_dir_label.config(text=str(self.output_directory))
+                logger.info(f"Output directory changed to: {self.output_directory}")
+        except Exception as e:
+            logger.error(f"Error browsing directory: {e}")
+
+    def _reset_output_directory(self):
+        """Reset output directory to current working directory."""
+        try:
+            self.output_directory = Path.cwd()
+            self.output_dir_label.config(text=str(self.output_directory))
+            logger.info(f"Output directory reset to: {self.output_directory}")
+        except Exception as e:
+            logger.error(f"Error resetting directory: {e}")
+
+    def _save_settings(self, window):
+        """Save settings and close dialog."""
+        try:
+            # Save player preference
+            self.preferred_player_setting = self.settings_player_var.get()
+            self.player_var.set(self.preferred_player_setting)
+
+            # Save to config file
+            self.save_config()
+
+            messagebox.showinfo("Success", "✅ Settings saved successfully!")
+            logger.info("Settings saved")
+            window.destroy()
+        except Exception as e:
+            self._show_error("Error", f"Failed to save settings:\n{str(e)}", "error")
 
     def _show_error(self, title, message, error_type="error"):
         """Show error dialog with copy-paste capability."""
@@ -479,7 +655,7 @@ class SlideshowManager:
         search_entry.pack(side=tk.LEFT, padx=5)
         search_entry.bind("<KeyRelease>", lambda e: self.load_images())
 
-        # Right section - Player selection, Create slideshow and error log
+        # Right section - Player selection, Create slideshow, settings and error log
         right_section = ttk.Frame(control_frame)
         right_section.pack(side=tk.RIGHT)
 
@@ -492,6 +668,7 @@ class SlideshowManager:
         player_menu.pack(side=tk.LEFT, padx=5)
 
         ttk.Button(right_section, text="🎬 Create Slideshow", command=self.create_slideshow).pack(side=tk.LEFT, padx=5)
+        ttk.Button(right_section, text="⚙️ Settings", command=self.show_settings_dialog).pack(side=tk.LEFT, padx=5)
         ttk.Button(right_section, text="📋 Error Log", command=self.show_error_log).pack(side=tk.LEFT, padx=5)
 
         # Stats bar
@@ -570,7 +747,11 @@ class SlideshowManager:
                 with open(self.CONFIG_FILE, 'r') as f:
                     config = json.load(f)
                     self.hidden_images = set(config.get("hidden", []))
+                    # Load settings
+                    self.output_directory = Path(config.get("output_directory", str(Path.cwd())))
+                    self.preferred_player_setting = config.get("preferred_player", "auto")
                 logger.info(f"Loaded {len(self.hidden_images)} hidden images from config")
+                logger.info(f"Output directory: {self.output_directory}")
             except json.JSONDecodeError as e:
                 error_msg = f"Configuration file is corrupted:\n\n{str(e)}\n\nDeleting corrupted config..."
                 logger.error(f"JSON decode error loading config: {error_msg}")
@@ -586,10 +767,15 @@ class SlideshowManager:
     def save_config(self):
         """Save configuration to file."""
         try:
-            config = {"hidden": list(self.hidden_images)}
+            config = {
+                "hidden": list(self.hidden_images),
+                "output_directory": str(self.output_directory),
+                "preferred_player": self.preferred_player_setting
+            }
             with open(self.CONFIG_FILE, 'w') as f:
                 json.dump(config, f, indent=2)
             logger.debug(f"Saved configuration with {len(self.hidden_images)} hidden images")
+            logger.debug(f"Saved output directory: {self.output_directory}")
         except Exception as e:
             error_msg = f"Failed to save configuration:\n\n{str(e)}\n\n{traceback.format_exc()}"
             logger.error(f"Error saving config: {error_msg}")
@@ -884,7 +1070,8 @@ class SlideshowManager:
         output_name = simpledialog.askstring(
             "Slideshow Name",
             f"Enter slideshow name:\n\n"
-            f"(Using {len(visible_images)} visible image(s))",
+            f"(Using {len(visible_images)} visible image(s))\n"
+            f"(Saving to: {self.output_directory})",
             initialvalue=f"slideshow_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
         )
 
@@ -894,14 +1081,17 @@ class SlideshowManager:
         if not output_name.endswith(".mp4"):
             output_name += ".mp4"
 
+        # Full path with output directory
+        output_path = self.output_directory / output_name
+
         # Check if file already exists
-        if Path(output_name).exists():
+        if output_path.exists():
             if not messagebox.askyesno("File Exists", f"{output_name} already exists. Overwrite?"):
                 return
 
         # Run in thread to avoid freezing UI
         self.is_creating = True
-        thread = threading.Thread(target=self._create_slideshow_thread, args=(output_name, visible_images))
+        thread = threading.Thread(target=self._create_slideshow_thread, args=(str(output_path), visible_images))
         thread.daemon = True
         thread.start()
 
