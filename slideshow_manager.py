@@ -290,8 +290,8 @@ class SlideshowManager:
         self.setup_ui()
         self.load_images()
 
-        # Update play button state based on existing videos
-        self._update_play_button_state()
+        # Show video selection panel by default
+        self._show_available_videos_on_startup()
 
         # Refresh error log display after UI is set up
         self.root.after(100, self._refresh_error_log_display)
@@ -821,6 +821,18 @@ Features:
         except Exception as e:
             logger.debug(f"Error updating play button state: {e}")
 
+    def _show_available_videos_on_startup(self):
+        """Show available videos in the selection panel on startup."""
+        try:
+            videos = self._get_available_videos()
+            if videos:
+                logger.info(f"Showing {len(videos)} available video(s) on startup")
+                self._show_video_selection_panel(videos)
+            else:
+                logger.info("No videos available on startup")
+        except Exception as e:
+            logger.debug(f"Error showing videos on startup: {e}")
+
     def _play_last_slideshow(self):
         """Play the last created slideshow or show video selection panel."""
         try:
@@ -847,9 +859,8 @@ Features:
             for widget in self.video_panel_container.winfo_children():
                 widget.destroy()
 
-            # Create video selection panel inside the container
-            self.video_panel_frame = ttk.LabelFrame(self.video_panel_container, text="📹 Select Video to Play", padding=10)
-            self.video_panel_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=0, pady=0)
+            # Use the container directly (it's already a LabelFrame)
+            self.video_panel_frame = self.video_panel_container
             logger.info("Video panel frame created and packed")
 
             # Frame for listbox and scrollbar
@@ -913,7 +924,11 @@ Features:
                 logger.info("Close button clicked")
                 self._hide_video_selection_panel()
 
-            ttk.Button(btn_frame, text="▶️ Play Selected", command=play_selected).pack(side=tk.LEFT, padx=3)
+            # Use RoundedButton for play button
+            play_btn = RoundedButton(btn_frame, text="▶️ Play Selected", command=play_selected,
+                                    width=140, height=35, radius=8)
+            play_btn.pack(side=tk.LEFT, padx=3)
+
             ttk.Button(btn_frame, text="📁 Open Folder", command=open_folder).pack(side=tk.LEFT, padx=3)
             ttk.Button(btn_frame, text="❌ Close", command=close_panel).pack(side=tk.RIGHT, padx=3)
             logger.info("All buttons created and packed")
@@ -980,25 +995,27 @@ Features:
         player_menu.pack(side=tk.LEFT, padx=5)
 
         ttk.Button(right_section, text="🎬 Create Slideshow", command=self.create_slideshow).pack(side=tk.LEFT, padx=5)
-        self.play_last_btn = ttk.Button(right_section, text="▶️ Play Video", command=self._play_last_slideshow, state=tk.DISABLED)
-        self.play_last_btn.pack(side=tk.LEFT, padx=5)
         ttk.Button(right_section, text="⚙️ Settings", command=self.show_settings_dialog).pack(side=tk.LEFT, padx=5)
         ttk.Button(right_section, text="📋 Event Log", command=self.show_event_log).pack(side=tk.LEFT, padx=5)
 
+        # Create resizable paned window for all sections
+        self.paned_window = ttk.PanedWindow(self.root, orient=tk.VERTICAL)
+        self.paned_window.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=5)
+
         # Video Selection Panel Placeholder (will be populated when needed)
-        self.video_panel_container = ttk.Frame(self.root)
-        self.video_panel_container.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
+        self.video_panel_container = ttk.LabelFrame(self.paned_window, text="📹 Select Video to Play", padding=10)
+        self.paned_window.add(self.video_panel_container, weight=1)
 
         # Stats bar
-        self.stats_frame = ttk.LabelFrame(self.root, text="Statistics", padding=10)
-        self.stats_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
+        self.stats_frame = ttk.LabelFrame(self.paned_window, text="Statistics", padding=10)
+        self.paned_window.add(self.stats_frame, weight=0)
 
         self.stats_label = ttk.Label(self.stats_frame, text="Loading...", font=("Arial", 10))
         self.stats_label.pack(side=tk.LEFT)
 
         # Event Log Display Panel (embedded in main window, resizable)
-        log_panel_frame = ttk.LabelFrame(self.root, text="📋 Event Log (Last 10 entries)", padding=5)
-        log_panel_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=5)
+        log_panel_frame = ttk.LabelFrame(self.paned_window, text="📋 Event Log (Last 10 entries)", padding=5)
+        self.paned_window.add(log_panel_frame, weight=1)
 
         # Error log text display (resizable)
         log_display_frame = ttk.Frame(log_panel_frame)
@@ -1027,9 +1044,9 @@ Features:
         ttk.Button(log_btn_frame, text="🗑️ Clear", command=self._clear_log).pack(side=tk.LEFT, padx=3)
         ttk.Button(log_btn_frame, text="📋 Copy All", command=lambda: self._copy_log_text(self.error_log_display)).pack(side=tk.LEFT, padx=3)
 
-        # Main canvas with scrollbar
-        canvas_frame = ttk.Frame(self.root)
-        canvas_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        # Main canvas with scrollbar (for image thumbnails)
+        canvas_frame = ttk.LabelFrame(self.paned_window, text="📸 Image Thumbnails", padding=5)
+        self.paned_window.add(canvas_frame, weight=2)
 
         scrollbar = ttk.Scrollbar(canvas_frame)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
