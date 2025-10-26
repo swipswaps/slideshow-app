@@ -674,7 +674,7 @@ Features:
             logger.debug(f"Error updating play button state: {e}")
 
     def _play_last_slideshow(self):
-        """Play the last created slideshow or show video selection dialog."""
+        """Play the last created slideshow or show video selection panel."""
         try:
             videos = self._get_available_videos()
 
@@ -687,33 +687,33 @@ Features:
                 self.play_video(str(videos[0]))
                 return
 
-            # If multiple videos, show selection dialog
-            self._show_video_selection_dialog(videos)
+            # If multiple videos, show selection panel in main window
+            self._show_video_selection_panel(videos)
         except Exception as e:
             logger.error(f"Error playing last slideshow: {e}")
             messagebox.showerror("Error", f"Error playing video:\n{str(e)}")
 
-    def _show_video_selection_dialog(self, videos):
-        """Show dialog to select which video to play."""
+    def _show_video_selection_panel(self, videos):
+        """Show video selection panel in main window."""
         try:
-            dialog = tk.Toplevel(self.root)
-            dialog.title("📹 Select Video to Play")
-            dialog.geometry("600x400")
-            dialog.resizable(True, True)
+            # If panel already exists, clear it
+            if hasattr(self, 'video_panel_frame') and self.video_panel_frame.winfo_exists():
+                self.video_panel_frame.destroy()
 
-            # Title
-            ttk.Label(dialog, text="Available Slideshows", font=("Arial", 12, "bold")).pack(pady=10)
+            # Create video selection panel
+            self.video_panel_frame = ttk.LabelFrame(self.root, text="📹 Select Video to Play", padding=10)
+            self.video_panel_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=10, pady=5, after=self.control_frame)
 
             # Frame for listbox and scrollbar
-            list_frame = ttk.Frame(dialog)
-            list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            list_frame = ttk.Frame(self.video_panel_frame)
+            list_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
             scrollbar = ttk.Scrollbar(list_frame)
             scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-            listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, font=("Courier", 9))
-            listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-            scrollbar.config(command=listbox.yview)
+            self.video_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, font=("Courier", 9), height=6)
+            self.video_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            scrollbar.config(command=self.video_listbox.yview)
 
             # Populate listbox with videos
             for i, video in enumerate(videos):
@@ -723,40 +723,43 @@ Features:
                     from datetime import datetime
                     date_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
                     display_text = f"{video.name} ({size_mb:.1f} MB) - {date_str}"
-                    listbox.insert(tk.END, display_text)
+                    self.video_listbox.insert(tk.END, display_text)
                 except Exception as e:
-                    listbox.insert(tk.END, video.name)
+                    self.video_listbox.insert(tk.END, video.name)
 
             # Select first item by default
             if videos:
-                listbox.selection_set(0)
-                listbox.see(0)
+                self.video_listbox.selection_set(0)
+                self.video_listbox.see(0)
+
+            # Store videos reference for button callbacks
+            self.available_videos_for_selection = videos
 
             # Buttons frame
-            btn_frame = ttk.Frame(dialog)
-            btn_frame.pack(fill=tk.X, padx=10, pady=10)
+            btn_frame = ttk.Frame(self.video_panel_frame)
+            btn_frame.pack(fill=tk.X, padx=5, pady=5)
 
             def play_selected():
-                selection = listbox.curselection()
+                selection = self.video_listbox.curselection()
                 if selection:
-                    selected_video = videos[selection[0]]
-                    dialog.destroy()
+                    selected_video = self.available_videos_for_selection[selection[0]]
                     self.play_video(str(selected_video))
                     self.last_slideshow_path = str(selected_video)
+                    # Hide panel after playing
+                    self.video_panel_frame.destroy()
 
             def open_folder():
-                self._open_folder(videos[0])
+                self._open_folder(self.available_videos_for_selection[0])
 
-            ttk.Button(btn_frame, text="▶️ Play Selected", command=play_selected).pack(side=tk.LEFT, padx=5)
-            ttk.Button(btn_frame, text="📁 Open Folder", command=open_folder).pack(side=tk.LEFT, padx=5)
-            ttk.Button(btn_frame, text="❌ Cancel", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+            def close_panel():
+                self.video_panel_frame.destroy()
 
-            # Make dialog modal
-            dialog.transient(self.root)
-            dialog.grab_set()
+            ttk.Button(btn_frame, text="▶️ Play Selected", command=play_selected).pack(side=tk.LEFT, padx=3)
+            ttk.Button(btn_frame, text="📁 Open Folder", command=open_folder).pack(side=tk.LEFT, padx=3)
+            ttk.Button(btn_frame, text="❌ Close", command=close_panel).pack(side=tk.RIGHT, padx=3)
 
         except Exception as e:
-            logger.error(f"Error showing video selection dialog: {e}")
+            logger.error(f"Error showing video selection panel: {e}")
             messagebox.showerror("Error", f"Error showing video list:\n{str(e)}")
 
     def setup_ui(self):
@@ -767,18 +770,18 @@ Features:
         ttk.Label(title_frame, text="📸 Slideshow Manager", font=("Arial", 14, "bold")).pack(side=tk.LEFT)
 
         # Control panel - organized in sections
-        control_frame = ttk.LabelFrame(self.root, text="Controls", padding=10)
-        control_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
+        self.control_frame = ttk.LabelFrame(self.root, text="Controls", padding=10)
+        self.control_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
 
         # Left section - File operations
-        left_section = ttk.Frame(control_frame)
+        left_section = ttk.Frame(self.control_frame)
         left_section.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         ttk.Button(left_section, text="➕ Add Images", command=self.add_images).pack(side=tk.LEFT, padx=5)
         ttk.Button(left_section, text="🔄 Refresh", command=self.load_images).pack(side=tk.LEFT, padx=5)
 
         # Middle section - Sort and Search
-        middle_section = ttk.Frame(control_frame)
+        middle_section = ttk.Frame(self.control_frame)
         middle_section.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=20)
 
         ttk.Label(middle_section, text="Sort by:").pack(side=tk.LEFT, padx=5)
@@ -795,7 +798,7 @@ Features:
         search_entry.bind("<KeyRelease>", lambda e: self.load_images())
 
         # Right section - Player selection, Create slideshow, settings and error log
-        right_section = ttk.Frame(control_frame)
+        right_section = ttk.Frame(self.control_frame)
         right_section.pack(side=tk.RIGHT)
 
         # Player selection dropdown
