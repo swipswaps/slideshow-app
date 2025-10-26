@@ -160,6 +160,7 @@ class SlideshowManager:
         self.preferred_player = None  # Best available player
         self.output_directory = Path.cwd()  # Output directory for slideshows
         self.preferred_player_setting = "auto"  # User's preferred player setting
+        self.last_slideshow_path = None  # Track last created slideshow for quick play
 
         logger.info("=" * 80)
         logger.info("Slideshow Manager Started")
@@ -283,11 +284,21 @@ class SlideshowManager:
             else:
                 last_lines = "No errors logged yet"
 
+            # Get current scroll position to preserve user's scroll location
+            current_scroll = self.error_log_display.yview()
+
             self.error_log_display.config(state=tk.NORMAL)
             self.error_log_display.delete(1.0, tk.END)
             self.error_log_display.insert(tk.END, last_lines)
             self.error_log_display.config(state=tk.DISABLED)
-            self.error_log_display.see(tk.END)
+
+            # Only auto-scroll to end if user was already at the bottom
+            # Otherwise preserve their scroll position
+            if current_scroll[1] >= 0.95:  # If scrolled to bottom (95%+)
+                self.error_log_display.see(tk.END)
+            else:
+                # Restore previous scroll position
+                self.error_log_display.yview_moveto(current_scroll[0])
         except Exception as e:
             logger.debug(f"Error refreshing log display: {e}")
 
@@ -634,6 +645,20 @@ Features:
             logger.error(f"Error playing video: {error_msg}")
             self._show_error("Error", error_msg, "error")
 
+    def _play_last_slideshow(self):
+        """Play the last created slideshow."""
+        if not self.last_slideshow_path:
+            messagebox.showwarning("No Slideshow", "No slideshow has been created yet.")
+            return
+
+        if not Path(self.last_slideshow_path).exists():
+            messagebox.showerror("File Not Found", f"Slideshow file not found:\n{self.last_slideshow_path}")
+            self.last_slideshow_path = None
+            self.play_last_btn.config(state=tk.DISABLED)
+            return
+
+        self.play_video(self.last_slideshow_path)
+
     def setup_ui(self):
         """Setup the user interface with improved layout."""
         # Title bar
@@ -682,6 +707,8 @@ Features:
         player_menu.pack(side=tk.LEFT, padx=5)
 
         ttk.Button(right_section, text="🎬 Create Slideshow", command=self.create_slideshow).pack(side=tk.LEFT, padx=5)
+        self.play_last_btn = ttk.Button(right_section, text="▶️ Play Last", command=self._play_last_slideshow, state=tk.DISABLED)
+        self.play_last_btn.pack(side=tk.LEFT, padx=5)
         ttk.Button(right_section, text="⚙️ Settings", command=self.show_settings_dialog).pack(side=tk.LEFT, padx=5)
         ttk.Button(right_section, text="📋 Error Log", command=self.show_error_log).pack(side=tk.LEFT, padx=5)
 
@@ -692,20 +719,20 @@ Features:
         self.stats_label = ttk.Label(self.stats_frame, text="Loading...", font=("Arial", 10))
         self.stats_label.pack(side=tk.LEFT)
 
-        # Error Log Display Panel (embedded in main window)
-        log_panel_frame = ttk.LabelFrame(self.root, text="📋 Error Log (Last 10 entries)", padding=5)
-        log_panel_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
+        # Error Log Display Panel (embedded in main window, resizable)
+        log_panel_frame = ttk.LabelFrame(self.root, text="📋 Error Log (Last 10 entries) - Resizable", padding=5)
+        log_panel_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-        # Error log text display
+        # Error log text display (resizable)
         log_display_frame = ttk.Frame(log_panel_frame)
-        log_display_frame.pack(fill=tk.BOTH, expand=False, padx=5, pady=5)
+        log_display_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         log_scrollbar = ttk.Scrollbar(log_display_frame)
         log_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         self.error_log_display = scrolledtext.ScrolledText(
             log_display_frame,
-            height=4,
+            height=8,
             wrap=tk.WORD,
             font=("Courier", 8),
             bg="gray20",
@@ -1224,6 +1251,10 @@ Features:
                 f"Images: {len(visible_images)}\n"
                 f"Duration: ~{len(visible_images) * 5} seconds"
             )
+
+            # Track last created slideshow for quick play
+            self.last_slideshow_path = str(output_name)
+            self.root.after(0, lambda: self.play_last_btn.config(state=tk.NORMAL))
 
             # Show success dialog with play option
             self.root.after(0, lambda: self._show_slideshow_success(output_name, success_msg))
