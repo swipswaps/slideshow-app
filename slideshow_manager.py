@@ -778,8 +778,9 @@ Features:
 
         except Exception as e:
             logger.error(f"Error showing video selection panel: {e}")
-            logger.error(traceback.format_exc())
-            messagebox.showerror("Error", f"Error showing video list:\n{str(e)}")
+            error_details = traceback.format_exc()
+            logger.error(error_details)
+            self._show_error("Error", f"Error showing video list:\n\n{error_details}", "error")
 
     def _hide_video_selection_panel(self):
         """Hide the video selection panel."""
@@ -859,8 +860,9 @@ Features:
 
         except Exception as e:
             logger.error(f"Error creating VLC player panel: {e}")
-            logger.error(traceback.format_exc())
-            messagebox.showerror("Error", f"Error creating video player:\n{str(e)}")
+            error_details = traceback.format_exc()
+            logger.error(error_details)
+            self._show_error("Error", f"Error creating video player:\n\n{error_details}", "error")
             # Fall back to standalone player
             self.play_video(video_path)
 
