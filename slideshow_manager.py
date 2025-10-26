@@ -209,11 +209,11 @@ class SlideshowManager:
         y = (self.root.winfo_screenheight() // 2) - (height // 2)
         self.root.geometry(f'{width}x{height}+{x}+{y}')
     
-    def show_error_log(self):
-        """Show error log viewer window."""
+    def show_event_log(self):
+        """Show event log viewer window."""
         try:
             if not log_file.exists():
-                messagebox.showinfo("No Logs", "No error log file found yet.")
+                messagebox.showinfo("No Logs", "No event log file found yet.")
                 return
 
             with open(log_file, 'r') as f:
@@ -221,13 +221,14 @@ class SlideshowManager:
 
             # Create log viewer window
             log_window = tk.Toplevel(self.root)
-            log_window.title("Error Log Viewer")
+            log_window.title("📋 Event Log Viewer")
             log_window.geometry("800x600")
+            log_window.resizable(True, True)
 
             # Title
             title_frame = ttk.Frame(log_window)
             title_frame.pack(fill=tk.X, padx=10, pady=10)
-            ttk.Label(title_frame, text="📋 Error Log", font=("Arial", 12, "bold")).pack(anchor=tk.W)
+            ttk.Label(title_frame, text="📋 Event Log", font=("Arial", 12, "bold")).pack(anchor=tk.W)
             ttk.Label(title_frame, text=f"File: {log_file}", font=("Arial", 9), foreground="gray").pack(anchor=tk.W)
 
             # Log text area
@@ -253,7 +254,7 @@ class SlideshowManager:
             ttk.Button(btn_frame, text="🗑️ Clear Log", command=self._clear_log).pack(side=tk.LEFT, padx=5)
             ttk.Button(btn_frame, text="✅ Close", command=log_window.destroy).pack(side=tk.RIGHT, padx=5)
 
-            logger.info("Error log viewer opened")
+            logger.info("Event log viewer opened")
         except Exception as e:
             self._show_error("Error", f"Failed to open error log:\n{str(e)}", "error")
 
@@ -269,12 +270,12 @@ class SlideshowManager:
             logger.error(f"Failed to copy log: {e}")
 
     def _clear_log(self):
-        """Clear the error log file."""
-        if messagebox.askyesno("Confirm", "Clear all error logs? This cannot be undone."):
+        """Clear the event log file."""
+        if messagebox.askyesno("Confirm", "Clear all event logs? This cannot be undone."):
             try:
                 log_file.write_text("")
-                messagebox.showinfo("Success", "✅ Error log cleared!")
-                logger.info("Error log cleared by user")
+                messagebox.showinfo("Success", "✅ Event log cleared!")
+                logger.info("Event log cleared by user")
                 self._refresh_error_log_display()
             except Exception as e:
                 self._show_error("Error", f"Failed to clear log:\n{str(e)}", "error")
@@ -802,12 +803,8 @@ Features:
                     selected_video = self.available_videos_for_selection[selection[0]]
                     logger.info(f"Playing: {selected_video}")
                     self.last_slideshow_path = str(selected_video)
-                    # Use embedded or standalone player based on setting
-                    if self.player_mode == "embedded" and HAS_VLC:
-                        self._create_vlc_player_panel(str(selected_video))
-                    else:
-                        self.play_video(str(selected_video))
-                        self._hide_video_selection_panel()
+                    # Show play mode choice dialog
+                    self._show_play_mode_dialog(str(selected_video))
 
             def open_folder():
                 logger.info("Open Folder button clicked")
@@ -845,8 +842,82 @@ Features:
                 widget.destroy()
             # Reset saved layout
             self.saved_layout = None
+            # Show video selection panel again
+            if self.last_slideshow_path:
+                videos = list(self.output_directory.glob("*.mp4"))
+                if videos:
+                    self._show_video_selection_panel(videos)
         except Exception as e:
             logger.error(f"Error restoring layout: {e}")
+
+    def _show_play_mode_dialog(self, video_path):
+        """Show dialog to choose between embedded and external player."""
+        try:
+            dialog = tk.Toplevel(self.root)
+            dialog.title("▶️ Choose Player")
+            dialog.geometry("400x200")
+            dialog.resizable(False, False)
+            dialog.transient(self.root)
+            dialog.grab_set()
+
+            # Center on parent
+            dialog.update_idletasks()
+            x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (dialog.winfo_width() // 2)
+            y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (dialog.winfo_height() // 2)
+            dialog.geometry(f"+{x}+{y}")
+
+            # Title
+            title_label = ttk.Label(dialog, text="How would you like to play this video?", font=("Arial", 11, "bold"))
+            title_label.pack(pady=20)
+
+            # Option variable
+            play_mode_var = tk.StringVar(value="default")
+
+            # Embedded option (only if VLC available)
+            if HAS_VLC:
+                embedded_frame = ttk.Frame(dialog)
+                embedded_frame.pack(fill=tk.X, padx=20, pady=10)
+                ttk.Radiobutton(
+                    embedded_frame,
+                    text="🎬 Embedded Player (VLC in main window)",
+                    variable=play_mode_var,
+                    value="embedded"
+                ).pack(anchor=tk.W)
+                ttk.Label(embedded_frame, text="Watch video in the app window", foreground="gray", font=("Arial", 9)).pack(anchor=tk.W, padx=20)
+
+            # External option
+            external_frame = ttk.Frame(dialog)
+            external_frame.pack(fill=tk.X, padx=20, pady=10)
+            ttk.Radiobutton(
+                external_frame,
+                text="🖥️ External Player (separate window)",
+                variable=play_mode_var,
+                value="external"
+            ).pack(anchor=tk.W)
+            ttk.Label(external_frame, text="Open video in external player", foreground="gray", font=("Arial", 9)).pack(anchor=tk.W, padx=20)
+
+            # Buttons
+            btn_frame = ttk.Frame(dialog)
+            btn_frame.pack(fill=tk.X, padx=20, pady=20)
+
+            def play_with_choice():
+                choice = play_mode_var.get()
+                logger.info(f"User chose: {choice}")
+                dialog.destroy()
+
+                if choice == "embedded" and HAS_VLC:
+                    self._create_vlc_player_panel(video_path)
+                else:
+                    self.play_video(video_path)
+                    self._hide_video_selection_panel()
+
+            ttk.Button(btn_frame, text="▶️ Play", command=play_with_choice).pack(side=tk.RIGHT, padx=5)
+            ttk.Button(btn_frame, text="❌ Cancel", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+
+            logger.info("Play mode choice dialog opened")
+        except Exception as e:
+            logger.error(f"Error showing play mode dialog: {e}")
+            self._show_error("Error", f"Failed to show play mode dialog:\n{str(e)}", "error")
 
     def _create_vlc_player_panel(self, video_path):
         """Create an embedded VLC player panel in the main window."""
@@ -981,7 +1052,7 @@ Features:
         self.play_last_btn = ttk.Button(right_section, text="▶️ Play Video", command=self._play_last_slideshow, state=tk.DISABLED)
         self.play_last_btn.pack(side=tk.LEFT, padx=5)
         ttk.Button(right_section, text="⚙️ Settings", command=self.show_settings_dialog).pack(side=tk.LEFT, padx=5)
-        ttk.Button(right_section, text="📋 Error Log", command=self.show_error_log).pack(side=tk.LEFT, padx=5)
+        ttk.Button(right_section, text="📋 Event Log", command=self.show_event_log).pack(side=tk.LEFT, padx=5)
 
         # Video Selection Panel Placeholder (will be populated when needed)
         self.video_panel_container = ttk.Frame(self.root)
@@ -994,8 +1065,8 @@ Features:
         self.stats_label = ttk.Label(self.stats_frame, text="Loading...", font=("Arial", 10))
         self.stats_label.pack(side=tk.LEFT)
 
-        # Error Log Display Panel (embedded in main window, resizable)
-        log_panel_frame = ttk.LabelFrame(self.root, text="📋 Error Log (Last 10 entries) - Resizable", padding=5)
+        # Event Log Display Panel (embedded in main window, resizable)
+        log_panel_frame = ttk.LabelFrame(self.root, text="📋 Event Log (Last 10 entries)", padding=5)
         log_panel_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=5)
 
         # Error log text display (resizable)
@@ -1021,8 +1092,8 @@ Features:
         # Log control buttons
         log_btn_frame = ttk.Frame(log_panel_frame)
         log_btn_frame.pack(fill=tk.X, padx=5, pady=5)
-        ttk.Button(log_btn_frame, text="🔄 Refresh Log", command=self._refresh_error_log_display).pack(side=tk.LEFT, padx=3)
-        ttk.Button(log_btn_frame, text="🗑️ Clear Log", command=self._clear_log).pack(side=tk.LEFT, padx=3)
+        ttk.Button(log_btn_frame, text="🔄 Refresh", command=self._refresh_error_log_display).pack(side=tk.LEFT, padx=3)
+        ttk.Button(log_btn_frame, text="🗑️ Clear", command=self._clear_log).pack(side=tk.LEFT, padx=3)
         ttk.Button(log_btn_frame, text="📋 Copy All", command=lambda: self._copy_log_text(self.error_log_display)).pack(side=tk.LEFT, padx=3)
 
         # Main canvas with scrollbar
