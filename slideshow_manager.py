@@ -27,11 +27,20 @@ try:
 except ImportError:
     HAS_TTKBOOTSTRAP = False
 
-try:
-    import vlc
-    HAS_VLC = True
-except ImportError:
-    HAS_VLC = False
+# Custom style for rounded corners (using ttkbootstrap)
+def setup_custom_styles():
+    """Setup custom styles for rounded corners and modern look."""
+    try:
+        if HAS_TTKBOOTSTRAP:
+            # Create custom style with rounded appearance
+            style = ttk_bootstrap.Style(theme="darkly")
+            # Configure button style with padding for rounded appearance
+            style.configure('TButton', padding=8, relief='flat', borderwidth=0)
+            style.configure('TLabel', background='#2b2b2b', foreground='white')
+            return style
+    except Exception as e:
+        logger.debug(f"Error setting up custom styles: {e}")
+    return None
 
 # Setup logging to both file and console
 log_file = Path.cwd() / "slideshow_manager.log"
@@ -163,6 +172,13 @@ class SlideshowManager:
         self.root.geometry("1400x900")
         self.root.minsize(800, 600)
 
+        # Apply rounded corners to window (Linux/X11)
+        try:
+            if sys.platform == "linux":
+                self.root.attributes('-type', 'normal')
+        except Exception as e:
+            logger.debug(f"Could not apply window attributes: {e}")
+
         self.images = []  # List of image paths
         self.hidden_images = set()  # Hidden image paths
         self.thumbnails = {}  # Cache for thumbnails
@@ -175,9 +191,6 @@ class SlideshowManager:
         self.output_directory = Path.cwd()  # Output directory for slideshows
         self.preferred_player_setting = "auto"  # User's preferred player setting
         self.last_slideshow_path = None  # Track last created slideshow for quick play
-        self.player_mode = "embedded"  # "embedded" or "standalone"
-        self.vlc_media_player = None  # VLC player instance
-        self.saved_layout = None  # Save layout before showing embedded player
 
         logger.info("=" * 80)
         logger.info("Slideshow Manager Started")
@@ -833,29 +846,12 @@ Features:
         except Exception as e:
             logger.debug(f"Error hiding video selection panel: {e}")
 
-    def _restore_layout(self):
-        """Restore the layout after embedded player is closed."""
-        try:
-            logger.info("Restoring layout after player close")
-            # Clear the video panel container
-            for widget in self.video_panel_container.winfo_children():
-                widget.destroy()
-            # Reset saved layout
-            self.saved_layout = None
-            # Show video selection panel again
-            if self.last_slideshow_path:
-                videos = list(self.output_directory.glob("*.mp4"))
-                if videos:
-                    self._show_video_selection_panel(videos)
-        except Exception as e:
-            logger.error(f"Error restoring layout: {e}")
-
     def _show_play_mode_dialog(self, video_path):
-        """Show dialog to choose between embedded and external player."""
+        """Show dialog to confirm playing video with external player."""
         try:
             dialog = tk.Toplevel(self.root)
-            dialog.title("▶️ Choose Player")
-            dialog.geometry("400x200")
+            dialog.title("▶️ Play Video")
+            dialog.geometry("400x150")
             dialog.resizable(False, False)
             dialog.transient(self.root)
             dialog.grab_set()
@@ -867,139 +863,32 @@ Features:
             dialog.geometry(f"+{x}+{y}")
 
             # Title
-            title_label = ttk.Label(dialog, text="How would you like to play this video?", font=("Arial", 11, "bold"))
-            title_label.pack(pady=20)
+            title_label = ttk.Label(dialog, text="Ready to play video?", font=("Arial", 11, "bold"))
+            title_label.pack(pady=15)
 
-            # Option variable
-            play_mode_var = tk.StringVar(value="default")
-
-            # Embedded option (only if VLC available)
-            if HAS_VLC:
-                embedded_frame = ttk.Frame(dialog)
-                embedded_frame.pack(fill=tk.X, padx=20, pady=10)
-                ttk.Radiobutton(
-                    embedded_frame,
-                    text="🎬 Embedded Player (VLC in main window)",
-                    variable=play_mode_var,
-                    value="embedded"
-                ).pack(anchor=tk.W)
-                ttk.Label(embedded_frame, text="Watch video in the app window", foreground="gray", font=("Arial", 9)).pack(anchor=tk.W, padx=20)
-
-            # External option
-            external_frame = ttk.Frame(dialog)
-            external_frame.pack(fill=tk.X, padx=20, pady=10)
-            ttk.Radiobutton(
-                external_frame,
-                text="🖥️ External Player (separate window)",
-                variable=play_mode_var,
-                value="external"
-            ).pack(anchor=tk.W)
-            ttk.Label(external_frame, text="Open video in external player", foreground="gray", font=("Arial", 9)).pack(anchor=tk.W, padx=20)
+            # Info
+            info_label = ttk.Label(dialog, text="🖥️ Video will open in external player", font=("Arial", 10))
+            info_label.pack(pady=10)
 
             # Buttons
             btn_frame = ttk.Frame(dialog)
             btn_frame.pack(fill=tk.X, padx=20, pady=20)
 
-            def play_with_choice():
-                choice = play_mode_var.get()
-                logger.info(f"User chose: {choice}")
+            def play_video_now():
+                logger.info(f"Playing video with external player: {video_path}")
+                self.play_video(video_path)
                 dialog.destroy()
+                self._hide_video_selection_panel()
 
-                if choice == "embedded" and HAS_VLC:
-                    self._create_vlc_player_panel(video_path)
-                else:
-                    self.play_video(video_path)
-                    self._hide_video_selection_panel()
-
-            ttk.Button(btn_frame, text="▶️ Play", command=play_with_choice).pack(side=tk.RIGHT, padx=5)
+            ttk.Button(btn_frame, text="▶️ Play", command=play_video_now).pack(side=tk.RIGHT, padx=5)
             ttk.Button(btn_frame, text="❌ Cancel", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
 
-            logger.info("Play mode choice dialog opened")
+            logger.info("Play confirmation dialog opened")
         except Exception as e:
-            logger.error(f"Error showing play mode dialog: {e}")
-            self._show_error("Error", f"Failed to show play mode dialog:\n{str(e)}", "error")
+            logger.error(f"Error showing play dialog: {e}")
+            self._show_error("Error", f"Failed to show play dialog:\n{str(e)}", "error")
 
-    def _create_vlc_player_panel(self, video_path):
-        """Create an embedded VLC player panel in the main window."""
-        try:
-            if not HAS_VLC:
-                logger.warning("VLC not available, falling back to standalone player")
-                self.play_video(video_path)
-                return
 
-            logger.info(f"Creating embedded VLC player for: {video_path}")
-
-            # Save current layout before showing player
-            self.saved_layout = {
-                'video_panel_visible': True,
-                'main_content_visible': True
-            }
-
-            # Clear the video panel container
-            for widget in self.video_panel_container.winfo_children():
-                widget.destroy()
-
-            # Create player frame
-            player_frame = ttk.LabelFrame(self.video_panel_container, text="📹 Video Player", padding=5)
-            player_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=0, pady=0)
-
-            # Create canvas for VLC to render into
-            canvas = tk.Canvas(player_frame, bg='black', height=400)
-            canvas.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-            canvas.update()
-
-            # Get canvas window ID for VLC embedding
-            window_id = canvas.winfo_id()
-            logger.info(f"Canvas window ID: {window_id}")
-
-            # Create VLC instance and media player
-            instance = vlc.Instance()
-            self.vlc_media_player = instance.media_list_player_new()
-            media_player = self.vlc_media_player.get_media_player()
-
-            # Embed player into canvas
-            media_player.set_xwindow(window_id)
-            logger.info("VLC player embedded into canvas")
-
-            # Create media list and add video
-            media_list = instance.media_list_new()
-            media = instance.media_new(video_path)
-            media_list.add_media(media)
-            self.vlc_media_player.set_media_list(media_list)
-            logger.info(f"Media added to playlist: {video_path}")
-
-            # Create control buttons
-            btn_frame = ttk.Frame(player_frame)
-            btn_frame.pack(fill=tk.X, padx=5, pady=5)
-
-            def play():
-                logger.info("Play button clicked")
-                self.vlc_media_player.play()
-
-            def pause():
-                logger.info("Pause button clicked")
-                self.vlc_media_player.pause()
-
-            def stop():
-                logger.info("Stop button clicked")
-                self.vlc_media_player.stop()
-                self._restore_layout()
-
-            ttk.Button(btn_frame, text="▶️ Play", command=play).pack(side=tk.LEFT, padx=3)
-            ttk.Button(btn_frame, text="⏸️ Pause", command=pause).pack(side=tk.LEFT, padx=3)
-            ttk.Button(btn_frame, text="⏹️ Stop", command=stop).pack(side=tk.LEFT, padx=3)
-
-            # Start playing
-            self.vlc_media_player.play()
-            logger.info("VLC player started")
-
-        except Exception as e:
-            logger.error(f"Error creating VLC player panel: {e}")
-            error_details = traceback.format_exc()
-            logger.error(error_details)
-            self._show_error("Error", f"Error creating video player:\n\n{error_details}", "error")
-            # Fall back to standalone player
-            self.play_video(video_path)
 
     def setup_ui(self):
         """Setup the user interface with improved layout."""
@@ -1638,6 +1527,8 @@ def main():
         # Use ttkbootstrap for Material Design theme
         root = ttk_bootstrap.Window(themename="darkly")
         logger.info("Using ttkbootstrap theme: darkly")
+        # Apply custom styles for rounded corners
+        setup_custom_styles()
     else:
         # Fallback to standard Tkinter
         root = tk.Tk()
