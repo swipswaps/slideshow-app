@@ -34,8 +34,15 @@ def setup_custom_styles():
         if HAS_TTKBOOTSTRAP:
             # Create custom style with rounded appearance
             style = ttk_bootstrap.Style(theme="darkly")
-            # Configure button style with padding for rounded appearance
-            style.configure('TButton', padding=8, relief='flat', borderwidth=0)
+            # Configure button style with better rounded appearance
+            style.configure('TButton',
+                          padding=10,
+                          relief='flat',
+                          borderwidth=0,
+                          focuscolor='none',
+                          font=('Arial', 10))
+            style.map('TButton',
+                     background=[('active', '#404040'), ('pressed', '#303030')])
             style.configure('TLabel', background='#2b2b2b', foreground='white')
             return style
     except Exception as e:
@@ -172,8 +179,11 @@ class SlideshowManager:
         self.root.geometry("1400x900")
         self.root.minsize(800, 600)
 
-        # Apply rounded corners to window (Linux/X11)
+        # Apply modern window styling
         try:
+            # Set window background to match theme
+            self.root.configure(bg='#2b2b2b')
+            # Try to apply rounded corners on Linux
             if sys.platform == "linux":
                 self.root.attributes('-type', 'normal')
         except Exception as e:
@@ -816,8 +826,9 @@ Features:
                     selected_video = self.available_videos_for_selection[selection[0]]
                     logger.info(f"Playing: {selected_video}")
                     self.last_slideshow_path = str(selected_video)
-                    # Show play mode choice dialog
-                    self._show_play_mode_dialog(str(selected_video))
+                    # Play video directly without confirmation dialog
+                    self.play_video(str(selected_video))
+                    self._hide_video_selection_panel()
 
             def open_folder():
                 logger.info("Open Folder button clicked")
@@ -845,50 +856,6 @@ Features:
                 widget.destroy()
         except Exception as e:
             logger.debug(f"Error hiding video selection panel: {e}")
-
-    def _show_play_mode_dialog(self, video_path):
-        """Show dialog to confirm playing video with external player."""
-        try:
-            dialog = tk.Toplevel(self.root)
-            dialog.title("▶️ Play Video")
-            dialog.geometry("400x150")
-            dialog.resizable(False, False)
-            dialog.transient(self.root)
-            dialog.grab_set()
-
-            # Center on parent
-            dialog.update_idletasks()
-            x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (dialog.winfo_width() // 2)
-            y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (dialog.winfo_height() // 2)
-            dialog.geometry(f"+{x}+{y}")
-
-            # Title
-            title_label = ttk.Label(dialog, text="Ready to play video?", font=("Arial", 11, "bold"))
-            title_label.pack(pady=15)
-
-            # Info
-            info_label = ttk.Label(dialog, text="🖥️ Video will open in external player", font=("Arial", 10))
-            info_label.pack(pady=10)
-
-            # Buttons
-            btn_frame = ttk.Frame(dialog)
-            btn_frame.pack(fill=tk.X, padx=20, pady=20)
-
-            def play_video_now():
-                logger.info(f"Playing video with external player: {video_path}")
-                self.play_video(video_path)
-                dialog.destroy()
-                self._hide_video_selection_panel()
-
-            ttk.Button(btn_frame, text="▶️ Play", command=play_video_now).pack(side=tk.RIGHT, padx=5)
-            ttk.Button(btn_frame, text="❌ Cancel", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
-
-            logger.info("Play confirmation dialog opened")
-        except Exception as e:
-            logger.error(f"Error showing play dialog: {e}")
-            self._show_error("Error", f"Failed to show play dialog:\n{str(e)}", "error")
-
-
 
     def setup_ui(self):
         """Setup the user interface with improved layout."""
