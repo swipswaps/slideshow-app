@@ -18,6 +18,13 @@ import threading
 import logging
 import traceback
 from io import StringIO
+import time
+
+try:
+    import vlc
+    HAS_VLC = True
+except ImportError:
+    HAS_VLC = False
 
 # Setup logging to both file and console
 log_file = Path.cwd() / "slideshow_manager.log"
@@ -752,10 +759,9 @@ Features:
                 if selection:
                     selected_video = self.available_videos_for_selection[selection[0]]
                     logger.info(f"Playing: {selected_video}")
-                    self.play_video(str(selected_video))
                     self.last_slideshow_path = str(selected_video)
-                    # Hide panel after playing
-                    self._hide_video_selection_panel()
+                    # Use embedded VLC player
+                    self._create_vlc_player_panel(str(selected_video))
 
             def open_folder():
                 logger.info("Open Folder button clicked")
@@ -782,6 +788,78 @@ Features:
                 widget.destroy()
         except Exception as e:
             logger.debug(f"Error hiding video selection panel: {e}")
+
+    def _create_vlc_player_panel(self, video_path):
+        """Create an embedded VLC player panel in the main window."""
+        try:
+            if not HAS_VLC:
+                logger.warning("VLC not available, falling back to standalone player")
+                self.play_video(video_path)
+                return
+
+            logger.info(f"Creating embedded VLC player for: {video_path}")
+
+            # Clear the video panel container
+            for widget in self.video_panel_container.winfo_children():
+                widget.destroy()
+
+            # Create player frame
+            player_frame = ttk.LabelFrame(self.video_panel_container, text="📹 Video Player", padding=5)
+            player_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=0, pady=0)
+
+            # Create canvas for VLC to render into
+            canvas = tk.Canvas(player_frame, bg='black', height=400)
+            canvas.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            canvas.update()
+
+            # Get canvas window ID for VLC embedding
+            window_id = canvas.winfo_id()
+            logger.info(f"Canvas window ID: {window_id}")
+
+            # Create VLC instance and player
+            instance = vlc.Instance()
+            self.vlc_player = instance.media_list_player_new()
+            media_player = self.vlc_player.get_media_player()
+
+            # Embed player into canvas
+            media_player.set_xwindow(window_id)
+            logger.info("VLC player embedded into canvas")
+
+            # Create media and add to playlist
+            media = instance.media_new(video_path)
+            self.vlc_player.get_media_list().add_media(media)
+
+            # Create control buttons
+            btn_frame = ttk.Frame(player_frame)
+            btn_frame.pack(fill=tk.X, padx=5, pady=5)
+
+            def play():
+                logger.info("Play button clicked")
+                self.vlc_player.play()
+
+            def pause():
+                logger.info("Pause button clicked")
+                self.vlc_player.pause()
+
+            def stop():
+                logger.info("Stop button clicked")
+                self.vlc_player.stop()
+                self._hide_video_selection_panel()
+
+            ttk.Button(btn_frame, text="▶️ Play", command=play).pack(side=tk.LEFT, padx=3)
+            ttk.Button(btn_frame, text="⏸️ Pause", command=pause).pack(side=tk.LEFT, padx=3)
+            ttk.Button(btn_frame, text="⏹️ Stop", command=stop).pack(side=tk.LEFT, padx=3)
+
+            # Start playing
+            self.vlc_player.play()
+            logger.info("VLC player started")
+
+        except Exception as e:
+            logger.error(f"Error creating VLC player panel: {e}")
+            logger.error(traceback.format_exc())
+            messagebox.showerror("Error", f"Error creating video player:\n{str(e)}")
+            # Fall back to standalone player
+            self.play_video(video_path)
 
     def setup_ui(self):
         """Setup the user interface with improved layout."""
