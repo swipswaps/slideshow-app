@@ -177,6 +177,9 @@ class SlideshowManager:
         # Refresh error log display after UI is set up
         self.root.after(100, self._refresh_error_log_display)
 
+        # Start auto-refresh of error log display (every 500ms)
+        self._schedule_log_refresh()
+
         # Center window on screen
         self.root.update_idletasks()
         width = self.root.winfo_width()
@@ -254,6 +257,17 @@ class SlideshowManager:
                 self._refresh_error_log_display()
             except Exception as e:
                 self._show_error("Error", f"Failed to clear log:\n{str(e)}", "error")
+
+    def _schedule_log_refresh(self):
+        """Schedule automatic refresh of error log display."""
+        try:
+            self._refresh_error_log_display()
+        except Exception as e:
+            logger.debug(f"Error in scheduled log refresh: {e}")
+        finally:
+            # Schedule next refresh in 500ms
+            if hasattr(self, 'root'):
+                self.root.after(500, self._schedule_log_refresh)
 
     def _refresh_error_log_display(self):
         """Refresh the embedded error log display with last 10 entries."""
