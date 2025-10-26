@@ -133,10 +133,11 @@ class SlideshowManager:
     PREFERRED_PLAYERS = [
         "vlc",           # VLC media player (most compatible)
         "mpv",           # MPV (lightweight, excellent quality)
-        "cinelerra",     # Cinelerra (professional)
+        "shotcut",       # Shotcut (video editor, can play videos)
+        "kdenlive",      # KdenLive (video editor, can play videos)
+        "cinelerra",     # Cinelerra (professional video editor)
         "ffplay",        # FFplay (comes with ffmpeg)
         "totem",         # GNOME Videos
-        "rhythmbox",     # GNOME Rhythmbox
         "smplayer",      # SMPlayer
         "mplayer",       # MPlayer
         "xine",          # Xine
@@ -807,7 +808,7 @@ Features:
         player_menu.pack(side=tk.LEFT, padx=5)
 
         ttk.Button(right_section, text="🎬 Create Slideshow", command=self.create_slideshow).pack(side=tk.LEFT, padx=5)
-        self.play_last_btn = ttk.Button(right_section, text="▶️ Play Last", command=self._play_last_slideshow, state=tk.DISABLED)
+        self.play_last_btn = ttk.Button(right_section, text="▶️ Play Video", command=self._play_last_slideshow, state=tk.DISABLED)
         self.play_last_btn.pack(side=tk.LEFT, padx=5)
         ttk.Button(right_section, text="⚙️ Settings", command=self.show_settings_dialog).pack(side=tk.LEFT, padx=5)
         ttk.Button(right_section, text="📋 Error Log", command=self.show_error_log).pack(side=tk.LEFT, padx=5)
