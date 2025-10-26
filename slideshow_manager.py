@@ -1563,7 +1563,15 @@ Features:
 
 def main():
     """Main function."""
-    root = tk.Tk()
+    if HAS_TTKBOOTSTRAP:
+        # Use ttkbootstrap for Material Design theme
+        root = ttk_bootstrap.Window(themename="darkly")
+        logger.info("Using ttkbootstrap theme: darkly")
+    else:
+        # Fallback to standard Tkinter
+        root = tk.Tk()
+        logger.warning("ttkbootstrap not available, using standard Tkinter theme")
+
     app = SlideshowManager(root)
     root.mainloop()
 
