@@ -134,6 +134,7 @@ class SlideshowManager:
         "vlc",           # VLC media player (most compatible)
         "mpv",           # MPV (lightweight, excellent quality)
         "celluloid",     # Celluloid (modern GTK video player)
+        "shotcut",       # Shotcut (video editor, can play videos)
         "ffplay",        # FFplay (comes with ffmpeg)
         "totem",         # GNOME Videos
         "smplayer",      # SMPlayer
