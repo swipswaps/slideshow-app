@@ -49,6 +49,81 @@ def setup_custom_styles():
         logger.debug(f"Error setting up custom styles: {e}")
     return None
 
+
+class RoundedButton(tk.Canvas):
+    """Custom button with rounded corners using Canvas."""
+    def __init__(self, parent, text="", command=None, bg_color="#3d3d3d",
+                 hover_color="#404040", active_color="#303030",
+                 text_color="white", width=100, height=40, radius=10, **kwargs):
+        super().__init__(parent, width=width, height=height, bg=parent['bg'],
+                        highlightthickness=0, **kwargs)
+        self.command = command
+        self.text = text
+        self.bg_color = bg_color
+        self.hover_color = hover_color
+        self.active_color = active_color
+        self.text_color = text_color
+        self.radius = radius
+        self.is_pressed = False
+
+        # Draw initial button
+        self.draw_button(self.bg_color)
+
+        # Bind events
+        self.bind("<Enter>", self.on_enter)
+        self.bind("<Leave>", self.on_leave)
+        self.bind("<Button-1>", self.on_press)
+        self.bind("<ButtonRelease-1>", self.on_release)
+
+    def draw_button(self, color):
+        """Draw rounded rectangle button."""
+        self.delete("all")
+        w, h = self.winfo_width(), self.winfo_height()
+        if w <= 1 or h <= 1:
+            w, h = 100, 40
+
+        # Draw rounded rectangle
+        self.create_arc((0, 0, self.radius*2, self.radius*2),
+                       start=90, extent=90, fill=color, outline=color)
+        self.create_arc((w-self.radius*2, 0, w, self.radius*2),
+                       start=0, extent=90, fill=color, outline=color)
+        self.create_arc((w-self.radius*2, h-self.radius*2, w, h),
+                       start=270, extent=90, fill=color, outline=color)
+        self.create_arc((0, h-self.radius*2, self.radius*2, h),
+                       start=180, extent=90, fill=color, outline=color)
+
+        # Draw rectangles to fill gaps
+        self.create_rectangle((self.radius, 0, w-self.radius, h),
+                             fill=color, outline=color)
+        self.create_rectangle((0, self.radius, w, h-self.radius),
+                             fill=color, outline=color)
+
+        # Draw text
+        self.create_text(w//2, h//2, text=self.text, fill=self.text_color,
+                        font=("Arial", 10, "bold"))
+
+    def on_enter(self, event):
+        """Handle mouse enter."""
+        if not self.is_pressed:
+            self.draw_button(self.hover_color)
+
+    def on_leave(self, event):
+        """Handle mouse leave."""
+        if not self.is_pressed:
+            self.draw_button(self.bg_color)
+
+    def on_press(self, event):
+        """Handle mouse press."""
+        self.is_pressed = True
+        self.draw_button(self.active_color)
+
+    def on_release(self, event):
+        """Handle mouse release."""
+        self.is_pressed = False
+        self.draw_button(self.hover_color)
+        if self.command:
+            self.command()
+
 # Setup logging to both file and console
 log_file = Path.cwd() / "slideshow_manager.log"
 logging.basicConfig(
